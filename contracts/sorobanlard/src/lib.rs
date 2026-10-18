@@ -94,6 +94,10 @@
 //!   new Wasm hash and starts a `get_upgrade_timelock()`-ledger review window (default
 //!   ~1 day); `upgrade_contract` (both admins) executes it only after that window has
 //!   elapsed. `cancel_upgrade` withdraws a pending proposal at any time.
+//! - `set_upgrade_timelock` enforces a hard floor of `MIN_UPGRADE_TIMELOCK_LEDGERS`
+//!   (~1 day), so the review window can never be configured to zero.
+//! - `get_contract_version()` returns the semantic version of the live code so
+//!   off-chain systems can detect when an upgrade has been executed.
 //! - A compromised single admin key cannot upgrade the contract — both admin signatures
 //!   are required for every step, and the time-lock gives observers a chance to react to
 //!   a malicious proposal before it can take effect.
@@ -610,6 +614,11 @@ impl SorobanLardContract {
     /// Minimum ledgers before persistent storage TTL extension is triggered (~1 year)
     pub(crate) const PERSISTENT_TTL_THRESHOLD: u32 = 6_000_000;
     pub(crate) const PERSISTENT_TTL_EXTEND_TO: u32 = 6_300_000;
+    /// Semantic version of the deployed contract code, exposed on-chain via
+    /// `get_contract_version()` so off-chain consumers can detect upgrades.
+    /// Bump on every change to a public function signature or event payload
+    /// (see "Contract Versioning" in the README).
+    pub(crate) const CONTRACT_VERSION: &'static str = "0.1.0";
     const MAX_COURSE_ID_LEN: u32 = 256;
     const MAX_COURSE_TITLE_LEN: u32 = 512;
     /// Minimum non-zero course price accepted at registration, denominated
@@ -627,6 +636,13 @@ impl SorobanLardContract {
     /// sequences (~17,280 ledgers ≈ 1 day at 5s/ledger). Used when the
     /// admin has not configured a custom value via `set_upgrade_timelock`.
     const DEFAULT_UPGRADE_TIMELOCK_LEDGERS: u32 = 17_280;
+    /// Hard floor for the upgrade governance time-lock, in ledger sequences
+    /// (~17,280 ledgers ≈ 1 day at 5s/ledger). `set_upgrade_timelock` rejects
+    /// any lower value so a compromised admin pair cannot shrink the review
+    /// window to zero and push a malicious upgrade through immediately.
+    /// Mainnet deployments should configure a longer window — see the
+    /// "Upgrade Time-Lock Guidance" section of the README.
+    pub(crate) const MIN_UPGRADE_TIMELOCK_LEDGERS: u32 = 17_280;
     /// Cooldown period in ledger sequences after a course is archived
     /// before the same course ID can be re-registered. This prevents
     /// confusion where a new course inherits the identity of an archived
@@ -4818,10 +4834,17 @@ impl SorobanLardContract {
     /// Requires both admin signatures. Does not affect an already-pending
     /// upgrade's `effective_ledger` — propose a new upgrade to apply a
     /// changed time-lock.
+    ///
+    /// `ledgers` must be at least `MIN_UPGRADE_TIMELOCK_LEDGERS` (~1 day), so
+    /// even a compromised admin pair cannot remove the review window.
     pub fn set_upgrade_timelock(env: Env, admin1: Address, admin2: Address, ledgers: u32) {
         admin1.require_auth();
         admin2.require_auth();
         Self::require_multi_admin(&env, &admin1, &admin2);
+
+        if ledgers < Self::MIN_UPGRADE_TIMELOCK_LEDGERS {
+            panic!("upgrade time-lock is below the minimum allowed");
+        }
 
         env.storage()
             .instance()
@@ -4847,6 +4870,13 @@ impl SorobanLardContract {
     /// Get the currently pending upgrade proposal, if any.
     pub fn get_pending_upgrade(env: Env) -> Option<PendingUpgrade> {
         env.storage().instance().get(&DataKey::PendingUpgrade)
+    }
+
+    /// Get the semantic version (`MAJOR.MINOR.PATCH`) of the currently
+    /// deployed contract code. Lets the backend and block explorers detect
+    /// a live Wasm upgrade without comparing Wasm hashes manually.
+    pub fn get_contract_version(env: Env) -> String {
+        String::from_str(&env, Self::CONTRACT_VERSION)
     }
 
     // ----------------------------------------------------------

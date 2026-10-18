@@ -7863,8 +7863,35 @@ fn test_set_upgrade_timelock_authorized() {
     let (env, contract_id, _token_id, admin, sec_admin, _treasury, _instructor) = setup();
     let client = SorobanLardContractClient::new(&env, &contract_id);
 
-    client.set_upgrade_timelock(&admin, &sec_admin, &500u32);
-    assert_eq!(client.get_upgrade_timelock(), 500u32);
+    client.set_upgrade_timelock(&admin, &sec_admin, &51_840u32);
+    assert_eq!(client.get_upgrade_timelock(), 51_840u32);
+}
+
+#[test]
+fn test_set_upgrade_timelock_accepts_minimum() {
+    let (env, contract_id, _token_id, admin, sec_admin, _treasury, _instructor) = setup();
+    let client = SorobanLardContractClient::new(&env, &contract_id);
+
+    client.set_upgrade_timelock(
+        &admin,
+        &sec_admin,
+        &SorobanLardContract::MIN_UPGRADE_TIMELOCK_LEDGERS,
+    );
+    assert_eq!(
+        client.get_upgrade_timelock(),
+        SorobanLardContract::MIN_UPGRADE_TIMELOCK_LEDGERS
+    );
+}
+
+#[test]
+fn test_get_contract_version_returns_semver_constant() {
+    let (env, contract_id, _token_id, _admin, _sec_admin, _treasury, _instructor) = setup();
+    let client = SorobanLardContractClient::new(&env, &contract_id);
+
+    assert_eq!(
+        client.get_contract_version(),
+        String::from_str(&env, SorobanLardContract::CONTRACT_VERSION)
+    );
 }
 
 #[test]
@@ -10831,4 +10858,315 @@ fn test_process_refund_archives_enrollment_to_history() {
     );
     assert_eq!(archived.student, student);
     assert_eq!(archived.course_id, course_id);
+}
+
+// ============================================================
+// INVARIANT TESTS  (#133)
+// ============================================================
+//
+// Tests in this module verify the invariants documented in INVARIANTS.md,
+// as opposed to ordinary functional / happy-path behaviour. Naming
+// convention: `test_invariant_invNN_<description>`, where `INV-NN` is the
+// invariant's ID in INVARIANTS.md. `scripts/check_invariants.sh` (run in CI)
+// counts these tests and flags any documented invariant without one.
+//
+// Run only the invariant suite with: `cargo test invariants::`
+
+mod invariants {
+    use super::*;
+
+    /// INV-01 — every stroop a student pays is accounted for: treasury fee
+    /// plus instructor earnings credit equals the amount paid, which equals
+    /// the course price and the course's `total_earned`.
+    #[test]
+    fn test_invariant_inv01_enrollment_payment_is_fully_accounted() {
+        let (env, contract_id, token_id, admin, _sec_admin, treasury, instructor) = setup();
+        let client = SorobanLardContractClient::new(&env, &contract_id);
+        let token_client = token::Client::new(&env, &token_id);
+
+        let student = Address::generate(&env);
+        let price: i128 = 1_000_000_000;
+        token::StellarAssetClient::new(&env, &token_id).mint(&student, &price);
+        register_and_approve_course(
+            &env, &client, &token_id, &admin, &instructor, "COURSE-INV-01", price,
+        );
+        let course_id = String::from_str(&env, "COURSE-INV-01");
+
+        let contract_before = token_client.balance(&contract_id);
+        client.enroll(&student, &course_id);
+
+        let treasury_fee = token_client.balance(&treasury);
+        let instructor_credit = client.get_instructor_earnings(&instructor, &token_id);
+        let enrollment = client.get_enrollment(&student, &student, &course_id).unwrap();
+        let course = client.get_course(&course_id).unwrap();
+
+        assert_eq!(token_client.balance(&student), 0);
+        assert_eq!(treasury_fee + instructor_credit, price);
+        assert_eq!(enrollment.amount_paid, price);
+        assert_eq!(course.total_earned, price);
+        // The instructor share is held by the contract until withdrawn.
+        assert_eq!(
+            token_client.balance(&contract_id) - contract_before,
+            instructor_credit
+        );
+    }
+
+    /// INV-02 — a student holds at most one active enrollment per course;
+    /// a second payment for the same course is rejected.
+    #[test]
+    #[should_panic(expected = "already enrolled in this course")]
+    fn test_invariant_inv02_no_double_enrollment() {
+        let (env, contract_id, token_id, admin, _sec_admin, _treasury, instructor) = setup();
+        let client = SorobanLardContractClient::new(&env, &contract_id);
+
+        let student = Address::generate(&env);
+        token::StellarAssetClient::new(&env, &token_id).mint(&student, &100_000_000_000);
+        register_and_approve_course(
+            &env, &client, &token_id, &admin, &instructor, "COURSE-INV-02", 500_000_000,
+        );
+        let course_id = String::from_str(&env, "COURSE-INV-02");
+
+        client.enroll(&student, &course_id);
+        client.enroll(&student, &course_id);
+    }
+
+    /// INV-03 — a certificate can only be issued for a completed enrollment.
+    #[test]
+    #[should_panic(expected = "student has not completed this course")]
+    fn test_invariant_inv03_certificate_requires_completion() {
+        let (env, contract_id, token_id, admin, _sec_admin, _treasury, instructor) = setup();
+        let client = SorobanLardContractClient::new(&env, &contract_id);
+
+        let student = Address::generate(&env);
+        token::StellarAssetClient::new(&env, &token_id).mint(&student, &100_000_000_000);
+        register_and_approve_course(
+            &env, &client, &token_id, &admin, &instructor, "COURSE-INV-03", 400_000_000,
+        );
+        client.enroll(&student, &String::from_str(&env, "COURSE-INV-03"));
+
+        client.issue_certificate(
+            &admin,
+            &student,
+            &String::from_str(&env, "COURSE-INV-03"),
+            &String::from_str(&env, "CERT-INV-03"),
+            &String::from_str(&env, "Invariant Course"),
+            &get_enrollment_ref(&env, &client, &student, "COURSE-INV-03"),
+            &None,
+            &None,
+        );
+    }
+
+    /// INV-04 — once a revocation's challenge period has elapsed, the
+    /// certificate never verifies again and its `revoked` flag never flips
+    /// back to false.
+    #[test]
+    fn test_invariant_inv04_finalised_revocation_is_permanent() {
+        let (env, contract_id, token_id, admin, _sec_admin, _treasury, instructor) = setup();
+        let client = SorobanLardContractClient::new(&env, &contract_id);
+
+        let student = Address::generate(&env);
+        token::StellarAssetClient::new(&env, &token_id).mint(&student, &100_000_000_000);
+        register_and_approve_course(
+            &env, &client, &token_id, &admin, &instructor, "COURSE-INV-04", 600_000_000,
+        );
+        let course_id = String::from_str(&env, "COURSE-INV-04");
+        let cert_id = String::from_str(&env, "CERT-INV-04");
+
+        client.enroll(&student, &course_id);
+        client.mark_completed(
+            &admin,
+            &student,
+            &course_id,
+            &Some(String::from_str(&env, "evidence_hash")),
+        );
+        client.issue_certificate(
+            &admin,
+            &student,
+            &course_id,
+            &cert_id,
+            &String::from_str(&env, "Invariant Course"),
+            &get_enrollment_ref(&env, &client, &student, "COURSE-INV-04"),
+            &None,
+            &None,
+        );
+        client.revoke_certificate(&admin, &cert_id, &String::from_str(&env, "INVARIANT"));
+
+        let deadline = client
+            .get_certificate(&admin, &cert_id)
+            .revocation_deadline
+            .unwrap();
+        env.ledger().with_mut(|l| {
+            l.sequence_number = deadline;
+        });
+        assert!(!client.verify_certificate(&cert_id));
+
+        // Still revoked on later ledgers.
+        env.ledger().with_mut(|l| {
+            l.sequence_number = deadline + 1;
+        });
+        assert!(!client.verify_certificate(&cert_id));
+        assert!(client.get_certificate(&admin, &cert_id).revoked);
+    }
+
+    /// INV-05 — the effective platform fee is clamped to 100% (10_000 bps)
+    /// and never exceeds the payment, even with maximum surcharge stacking.
+    #[test]
+    fn test_invariant_inv05_effective_fee_never_exceeds_payment() {
+        let (env, contract_id, token_id, admin, _sec_admin, _treasury, _instructor) = setup();
+        let client = SorobanLardContractClient::new(&env, &contract_id);
+
+        client.set_fee_config(&admin, &token_id, &10_000u32);
+        client.set_risk_config_enabled(&admin, &true);
+        client.set_risk_fee_config(&admin, &10_000u32, &0i128, &10_000u32, &10_000u32);
+
+        let student = Address::generate(&env);
+        let payment: i128 = 1_000_000_000_000;
+        let breakdown = client.get_effective_fee_for_payment(&student, &token_id, &payment);
+
+        assert!(breakdown.effective_fee_bps <= 10_000);
+        assert!(breakdown.platform_fee <= payment);
+        assert!(breakdown.platform_fee >= 0);
+    }
+
+    /// INV-06 — an instructor can never withdraw more than their credited
+    /// earnings balance.
+    #[test]
+    #[should_panic(expected = "insufficient earnings balance")]
+    fn test_invariant_inv06_cannot_withdraw_more_than_earned() {
+        let (env, contract_id, token_id, admin, _sec_admin, _treasury, instructor) = setup();
+        let client = SorobanLardContractClient::new(&env, &contract_id);
+
+        let student = Address::generate(&env);
+        token::StellarAssetClient::new(&env, &token_id).mint(&student, &1_000_000_000);
+        register_and_approve_course(
+            &env, &client, &token_id, &admin, &instructor, "COURSE-INV-06", 500_000_000,
+        );
+        client.enroll(&student, &String::from_str(&env, "COURSE-INV-06"));
+
+        let earned = client.get_instructor_earnings(&instructor, &token_id);
+        client.withdraw_earnings(&instructor, &token_id, &(earned + 1));
+    }
+
+    /// INV-06 — a full withdrawal pays out exactly the credited balance and
+    /// zeroes it, so a repeated withdrawal moves no funds.
+    #[test]
+    fn test_invariant_inv06_withdrawal_pays_exactly_credited_balance() {
+        let (env, contract_id, token_id, admin, _sec_admin, _treasury, instructor) = setup();
+        let client = SorobanLardContractClient::new(&env, &contract_id);
+        let token_client = token::Client::new(&env, &token_id);
+
+        let student = Address::generate(&env);
+        token::StellarAssetClient::new(&env, &token_id).mint(&student, &1_000_000_000);
+        register_and_approve_course(
+            &env, &client, &token_id, &admin, &instructor, "COURSE-INV-06B", 500_000_000,
+        );
+        client.enroll(&student, &String::from_str(&env, "COURSE-INV-06B"));
+
+        let earned = client.get_instructor_earnings(&instructor, &token_id);
+        client.withdraw_earnings(&instructor, &token_id, &0);
+        assert_eq!(token_client.balance(&instructor), earned);
+        assert_eq!(client.get_instructor_earnings(&instructor, &token_id), 0);
+
+        client.withdraw_earnings(&instructor, &token_id, &0);
+        assert_eq!(token_client.balance(&instructor), earned);
+    }
+
+    /// INV-07 — arbitration fees are held 1:1 by the contract while a case
+    /// is open and paid out exactly once on resolution.
+    #[test]
+    fn test_invariant_inv07_arbitration_fee_custody_is_conserved() {
+        let (env, contract_id, token_id, admin, _sec_admin, _treasury, instructor) = setup();
+        let client = SorobanLardContractClient::new(&env, &contract_id);
+        let token_client = token::Client::new(&env, &token_id);
+
+        let fee_per_case = 5_000_000i128;
+        let student = setup_arbitration(
+            &env, &client, &token_id, &admin, &instructor, "COURSE-INV-07", fee_per_case,
+        );
+        let course_id = String::from_str(&env, "COURSE-INV-07");
+
+        let held_before = token_client.balance(&contract_id);
+        client.escalate_to_arbitration(&student, &course_id);
+        assert_eq!(token_client.balance(&contract_id) - held_before, fee_per_case);
+
+        env.mock_all_auths_allowing_non_root_auth();
+        client.resolve_arbitration(&admin, &student, &course_id, &true);
+        assert_eq!(token_client.balance(&contract_id), held_before);
+    }
+
+    /// INV-07 — a resolved arbitration case cannot be resolved (paid out)
+    /// a second time.
+    #[test]
+    #[should_panic(expected = "arbitration case is not open")]
+    fn test_invariant_inv07_arbitration_case_resolves_once() {
+        let (env, contract_id, token_id, admin, _sec_admin, _treasury, instructor) = setup();
+        let client = SorobanLardContractClient::new(&env, &contract_id);
+
+        let student = setup_arbitration(
+            &env, &client, &token_id, &admin, &instructor, "COURSE-INV-07B", 5_000_000,
+        );
+        let course_id = String::from_str(&env, "COURSE-INV-07B");
+
+        client.escalate_to_arbitration(&student, &course_id);
+        env.mock_all_auths_allowing_non_root_auth();
+        client.resolve_arbitration(&admin, &student, &course_id, &true);
+        client.resolve_arbitration(&admin, &student, &course_id, &false);
+    }
+
+    /// INV-08 — multi-sig operations require two distinct registered admins;
+    /// one admin signing twice is rejected.
+    #[test]
+    #[should_panic(expected = "unauthorized: requires both admin signatures")]
+    fn test_invariant_inv08_multisig_rejects_same_admin_twice() {
+        let (env, contract_id, token_id, admin, _sec_admin, _treasury, _instructor) = setup();
+        let client = SorobanLardContractClient::new(&env, &contract_id);
+
+        token::StellarAssetClient::new(&env, &token_id).mint(&contract_id, &1_000_000_000);
+        let destination = Address::generate(&env);
+        client.withdraw_tokens(&admin, &admin, &token_id, &500_000_000, &destination);
+    }
+
+    /// INV-09 — a proposed upgrade cannot execute before its time-lock
+    /// has elapsed.
+    #[test]
+    #[should_panic(expected = "upgrade time-lock has not elapsed")]
+    fn test_invariant_inv09_upgrade_blocked_before_timelock() {
+        let (env, contract_id, _token_id, admin, sec_admin, _treasury, _instructor) = setup();
+        let client = SorobanLardContractClient::new(&env, &contract_id);
+
+        client.propose_upgrade(&admin, &sec_admin, &BytesN::from_array(&env, &[7u8; 32]));
+        let pending = client.get_pending_upgrade().unwrap();
+        env.ledger().with_mut(|l| {
+            l.sequence_number = pending.effective_ledger - 1;
+        });
+        client.upgrade_contract(&admin, &sec_admin);
+    }
+
+    /// INV-09 — the upgrade time-lock can never be configured below
+    /// `MIN_UPGRADE_TIMELOCK_LEDGERS`, even by both admins.
+    #[test]
+    #[should_panic(expected = "upgrade time-lock is below the minimum allowed")]
+    fn test_invariant_inv09_timelock_cannot_be_set_below_floor() {
+        let (env, contract_id, _token_id, admin, sec_admin, _treasury, _instructor) = setup();
+        let client = SorobanLardContractClient::new(&env, &contract_id);
+
+        client.set_upgrade_timelock(
+            &admin,
+            &sec_admin,
+            &(SorobanLardContract::MIN_UPGRADE_TIMELOCK_LEDGERS - 1),
+        );
+    }
+
+    /// INV-10 — the contract can only be initialised once, so admin,
+    /// treasury and fee configuration cannot be overwritten via `init`.
+    #[test]
+    #[should_panic(expected = "contract already initialized")]
+    fn test_invariant_inv10_init_only_once() {
+        let (env, contract_id, _token_id, admin, sec_admin, treasury, _instructor) = setup();
+        let client = SorobanLardContractClient::new(&env, &contract_id);
+
+        client.init(
+            &admin, &sec_admin, &treasury, &20u32, &50u32, &1000u32, &17_280u32,
+        );
+    }
 }

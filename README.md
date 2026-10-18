@@ -58,6 +58,8 @@ This is **Repo 1 of 3** in the SorobanLard project:
 - [Building](#building)
 - [Deploying to Testnet](#deploying-to-testnet)
 - [Security Considerations](#security-considerations)
+- [Upgrade Time-Lock Guidance](#upgrade-time-lock-guidance)
+- [Contract Versioning](#contract-versioning)
 - [Roadmap](#roadmap)
 
 ---
@@ -237,6 +239,8 @@ Initialises the contract. Called once by the deployer.
 | `has_completed(student, course_id)` | `bool` |
 | `verify_certificate(certificate_id)` | `bool` — true if exists and not revoked |
 | `get_platform_fee()` | `u32` — current default fee % |
+| `get_upgrade_timelock()` | `u32` — current upgrade time-lock, in ledgers |
+| `get_contract_version()` | `String` — semantic version of the deployed contract code (e.g. `"0.1.0"`) |
 
 ---
 
@@ -304,13 +308,17 @@ sorobanlard-contract/
 ├── Cargo.lock
 ├── .gitignore
 ├── README.md
+├── INVARIANTS.md                      ← Documented contract invariants
+├── AUDIT_CHECKLIST.md                 ← Pre-audit security self-review checklist
+├── scripts/
+│   └── check_invariants.sh            ← CI: invariant tests vs. documented invariants
 └── contracts/
     └── sorobanlard/
         ├── Cargo.toml                 ← Contract package config
         ├── Makefile                   ← Build / deploy shortcuts
         └── src/
             ├── lib.rs                 ← Full contract logic
-            └── test.rs                ← 14 unit tests
+            └── test.rs                ← Unit tests (invariant tests in the `invariants` submodule)
 ```
 
 ---
@@ -348,6 +356,7 @@ cargo check
 cargo test
 cargo test -- --nocapture          # with output
 cargo test test_full_lifecycle     # single test
+cargo test invariants::            # invariant suite only (see INVARIANTS.md)
 ```
 
 Expected:
@@ -441,6 +450,52 @@ stellar contract invoke \
 - **Certificate immutability**: Revoked certificates are flagged — not deleted. This preserves the audit trail and prevents a revocation from being hidden.
 - **Admin is a single address**: For production, consider using a multi-sig wallet as the admin address to avoid a single point of failure.
 - **Fee validation**: Platform fee percentage is validated to be ≤ 100 at both `init` and `register_course` time.
+- **Upgrade time-lock floor**: `set_upgrade_timelock` rejects any value below `MIN_UPGRADE_TIMELOCK_LEDGERS` (17,280 ledgers ≈ 1 day), so even a compromised admin pair cannot set the review window to 0. See [Upgrade Time-Lock Guidance](#upgrade-time-lock-guidance) for the mainnet value.
+- **Invariants**: The core accounting and state-machine invariants are listed in [INVARIANTS.md](INVARIANTS.md). Each one is verified by a `test_invariant_*` test.
+- **Audit checklist**: Before any external audit, maintainers should work through [AUDIT_CHECKLIST.md](AUDIT_CHECKLIST.md). It covers this contract's specific risk areas.
+
+---
+
+## Upgrade Time-Lock Guidance
+
+Upgrades are two-step: `propose_upgrade` → wait `get_upgrade_timelock()` ledgers → `upgrade_contract`. Both admins must sign each step. The time-lock is the community's only window to review a proposed Wasm hash, and to withdraw funds or raise an alarm if the upgrade looks malicious or buggy.
+
+Ledger counts assume ~5 seconds per ledger.
+
+| Setting | Ledgers | ≈ Duration | Use |
+|---|---|---|---|
+| `MIN_UPGRADE_TIMELOCK_LEDGERS` (hard floor, enforced on-chain) | 17,280 | 1 day | Lowest value `set_upgrade_timelock` accepts |
+| `DEFAULT_UPGRADE_TIMELOCK_LEDGERS` (used if never configured) | 17,280 | 1 day | Testnet / development |
+| **Recommended mainnet minimum** | **51,840** | **3 days** | Set before mainnet launch |
+| Recommended once the platform holds significant funds | 120,960 | 7 days | Mature production |
+
+**Recommendation:** right after deploying to mainnet, and before any student funds are deposited, call `set_upgrade_timelock` with **at least 51,840 ledgers (~3 days)**.
+
+Why 3 days:
+- **Reaction time across weekends and time zones.** A 1-day window can pass entirely over a weekend or holiday before instructors, students or the backend team notice an `upgrade_proposed` event. Three days ensures at least one business day falls inside any window.
+- **Time to withdraw.** Instructors need enough time to call `withdraw_earnings` and pull out pending earnings before a malicious upgrade could redirect them.
+- **Industry practice.** Mature on-chain protocols generally use governance time-locks of 2–7 days. Three days is the low end of that range and suits an early-stage platform that still needs to ship fixes quickly.
+- **Emergency fixes still work.** The time-lock delays an upgrade but never blocks it, and `cancel_upgrade` can withdraw a bad proposal at any time. A critical bug can be contained with `pause_platform` (single admin) while the fix waits out the time-lock.
+
+Increase it to ~7 days (120,960 ledgers) once the contract holds significant value and the release process is stable. Backends and monitoring should alert on the `upgrade_proposed`, `upgrade_cancelled`, `upgrade_executed` and `upgrade_timelock_updated` events.
+
+---
+
+## Contract Versioning
+
+The deployed code reports its version through the read-only `get_contract_version()` function, which returns the `CONTRACT_VERSION` constant in `contracts/sorobanlard/src/lib.rs`. The backend and block explorers can compare this value before and after an `upgrade_executed` event. That tells them which functions and event payloads are available, without comparing Wasm hashes by hand.
+
+`CONTRACT_VERSION` follows [Semantic Versioning](https://semver.org/) (`MAJOR.MINOR.PATCH`):
+
+| Bump | When |
+|---|---|
+| **MAJOR** | Breaking change for integrators: a public function is removed or renamed, its arguments or return type change, an event's topic or payload changes, or the storage layout changes and needs migration |
+| **MINOR** | Backwards-compatible addition: a new public function, a new event, or a new optional behaviour |
+| **PATCH** | Bug fix or internal change with no change to function signatures or event payloads |
+
+While the major version is `0`, breaking changes may bump MINOR instead of MAJOR. Integrators should treat every `0.x` bump as potentially breaking.
+
+**PR rule:** every PR that changes a public function signature or an event payload must bump `CONTRACT_VERSION`. The PR template includes a checklist item for this.
 
 ---
 
