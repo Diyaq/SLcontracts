@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run unit tests (excluding property-based suite)
+        run: cargo test --workspace -- --skip proptests
+
+  property-tests:
+    name: Property-based tests (accounting fuzzing)
+    runs-on: ubuntu-latest
+    env:
+      # More cases than the local default (64) for broader coverage in CI.
+      PROPTEST_CASES: 256
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run property-based accounting tests
+        run: cargo test --workspace proptests
