@@ -318,7 +318,7 @@ Returns `true` if the certificate exists and has not been revoked. The `get_cert
 | `arbitration_resolved` | `(caller, course_id, for_student, admin)` | Admin resolved an open case |
 | `arbitration_auto_refunded` | `(caller, course_id, fee, ledger)` | Case timed out; fee refunded to the escalating caller |
 
-The backend listens to these events and updates the database, sends notifications, and triggers email confirmations.
+The backend listens to these events and updates the database, sends notifications, and triggers email confirmations. In particular, `arbitration_resolved` lets the backend notify both the student and the instructor and update the dispute status shown in the UI.
 
 ---
 

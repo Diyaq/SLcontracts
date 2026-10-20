@@ -10781,6 +10781,40 @@ fn setup_arbitration(
     student
 }
 
+/// Returns the outcome topic and payload of the single
+/// `arbitration_resolved` event emitted by `contract_id`.
+fn get_arbitration_resolved_event(
+    env: &Env,
+    contract_id: &Address,
+) -> (Symbol, ArbitrationResolved) {
+    let mut found: Option<(Symbol, ArbitrationResolved)> = None;
+    let mut count = 0u32;
+
+    for (contract, topics, data) in env.events().all().iter() {
+        if contract != *contract_id {
+            continue;
+        }
+
+        let topic_name: Symbol = topics.get(0).unwrap().try_into_val(env).unwrap();
+        if topic_name != Symbol::new(env, "arbitration_resolved") {
+            continue;
+        }
+
+        count += 1;
+        assert_eq!(
+            topics.len(),
+            3,
+            "arbitration_resolved must index case_id and outcome"
+        );
+        let outcome: Symbol = topics.get(2).unwrap().try_into_val(env).unwrap();
+        let payload: ArbitrationResolved = data.try_into_val(env).unwrap();
+        found = Some((outcome, payload));
+    }
+
+    assert_eq!(count, 1, "expected exactly one arbitration_resolved event");
+    found.unwrap()
+}
+
 /// #255 — escalate_to_arbitration() must persist a queryable ArbitrationCase record.
 #[test]
 fn test_escalation_creates_retrievable_arbitration_case() {
@@ -11083,6 +11117,13 @@ fn test_resolve_arbitration_payout_to_instructor() {
         fee_per_case,
         "instructor must receive the arbitration fee on an instructor-win resolution"
     );
+    assert_eq!(
+        outcome_topic,
+        Symbol::new(&env, "resolved_for_instructor"),
+        "event topic must distinguish an instructor-win outcome"
+    );
+    assert_eq!(event.case_id, course_id);
+    assert_eq!(event.outcome, DisputeStatus::ResolvedForInstructor);
 
     let case = client.get_arbitration_case(&student, &course_id).unwrap();
     assert_eq!(case.status, DisputeStatus::ResolvedForInstructor);
