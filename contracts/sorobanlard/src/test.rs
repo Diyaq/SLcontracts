@@ -10766,7 +10766,15 @@ fn setup_arbitration(
     fee_per_case: i128,
 ) -> Address {
     client.set_arbitration_fee_config(admin, &fee_per_case);
-    register_and_approve_course(env, client, token_id, admin, instructor, course_id, 1_000_000_000);
+    register_and_approve_course(
+        env,
+        client,
+        token_id,
+        admin,
+        instructor,
+        course_id,
+        1_000_000_000,
+    );
     let student = Address::generate(env);
     token::StellarAssetClient::new(env, token_id).mint(&student, &100_000_000_000);
     client.enroll(&student, &String::from_str(env, course_id));
@@ -10782,7 +10790,13 @@ fn test_escalation_creates_retrievable_arbitration_case() {
     let fee_per_case = 5_000_000i128;
     let course_id_str = "COURSE-ARB-255";
     let student = setup_arbitration(
-        &env, &client, &token_id, &admin, &instructor, course_id_str, fee_per_case,
+        &env,
+        &client,
+        &token_id,
+        &admin,
+        &instructor,
+        course_id_str,
+        fee_per_case,
     );
     let course_id = String::from_str(&env, course_id_str);
 
@@ -10792,7 +10806,10 @@ fn test_escalation_creates_retrievable_arbitration_case() {
         .get_arbitration_case(&student, &course_id)
         .expect("arbitration case must be retrievable after escalation");
 
-    assert_eq!(case.caller, student, "case must record the escalating student");
+    assert_eq!(
+        case.caller, student,
+        "case must record the escalating student"
+    );
     assert_eq!(case.course_id, course_id, "case must record the course id");
     assert_eq!(case.fee_paid, fee_per_case, "fee_paid must match config.fee_per_case");
     assert_eq!(case.status, DisputeStatus::Open, "newly created case must be Open");
@@ -10818,7 +10835,13 @@ fn test_duplicate_escalation_rejected() {
     let client = SorobanLardContractClient::new(&env, &contract_id);
 
     let student = setup_arbitration(
-        &env, &client, &token_id, &admin, &instructor, "COURSE-ARB-257", 5_000_000,
+        &env,
+        &client,
+        &token_id,
+        &admin,
+        &instructor,
+        "COURSE-ARB-257",
+        5_000_000,
     );
     let course_id = String::from_str(&env, "COURSE-ARB-257");
 
@@ -10983,7 +11006,13 @@ fn test_resolve_arbitration_refund_to_student() {
 
     let fee_per_case = 5_000_000i128;
     let student = setup_arbitration(
-        &env, &client, &token_id, &admin, &instructor, "COURSE-ARB-REFUND", fee_per_case,
+        &env,
+        &client,
+        &token_id,
+        &admin,
+        &instructor,
+        "COURSE-ARB-REFUND",
+        fee_per_case,
     );
     let course_id = String::from_str(&env, "COURSE-ARB-REFUND");
 
@@ -11025,7 +11054,13 @@ fn test_resolve_arbitration_payout_to_instructor() {
 
     let fee_per_case = 5_000_000i128;
     let student = setup_arbitration(
-        &env, &client, &token_id, &admin, &instructor, "COURSE-ARB-PAYOUT", fee_per_case,
+        &env,
+        &client,
+        &token_id,
+        &admin,
+        &instructor,
+        "COURSE-ARB-PAYOUT",
+        fee_per_case,
     );
     let course_id = String::from_str(&env, "COURSE-ARB-PAYOUT");
 
@@ -11494,13 +11529,21 @@ fn test_process_refund_archives_enrollment_to_history() {
     token::StellarAssetClient::new(&env, &token_id).mint(&student, &100_000_000_000);
 
     register_and_approve_course(
-        &env, &client, &token_id, &admin, &instructor, "COURSE-REFUND-ARCHIVE", 1_000_000_000,
+        &env,
+        &client,
+        &token_id,
+        &admin,
+        &instructor,
+        "COURSE-REFUND-ARCHIVE",
+        1_000_000_000,
     );
     let course_id = String::from_str(&env, "COURSE-REFUND-ARCHIVE");
 
     // Capture the amount paid at enrollment.
     client.enroll(&student, &course_id);
-    let enrollment = client.get_enrollment(&student, &student, &course_id).unwrap();
+    let enrollment = client
+        .get_enrollment(&student, &student, &course_id)
+        .unwrap();
     let amount_paid = enrollment.amount_paid;
     assert!(amount_paid > 0);
 
@@ -11511,14 +11554,20 @@ fn test_process_refund_archives_enrollment_to_history() {
 
     // The active enrollment must no longer exist.
     assert!(
-        client.get_enrollment(&student, &student, &course_id).is_none(),
+        client
+            .get_enrollment(&student, &student, &course_id)
+            .is_none(),
         "active enrollment must be removed after refund"
     );
 
     // The history must contain exactly one entry with is_refunded=true.
     let history = client.get_enrollment_history(&admin, &student, &course_id);
 
-    assert_eq!(history.len(), 1, "history must contain exactly one archived entry");
+    assert_eq!(
+        history.len(),
+        1,
+        "history must contain exactly one archived entry"
+    );
     let archived = history.get(0).unwrap();
     assert!(
         archived.is_refunded,

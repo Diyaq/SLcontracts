@@ -5549,12 +5549,13 @@ impl SorobanLardContract {
     /// previews and enroll()/re_enroll(), so a quote can never diverge from
     /// the actual charge.
     ///
-    /// The contract does not yet persist per-student enrollment history or a
-    /// BTC/ETH classification for tokens, so enrollment has always charged
-    /// both flags as `false`. When that state is added, it must be read here
-    /// so previews and enrollment pick it up together.
-    fn resolve_risk_flags(_env: &Env, _student: &Address, _token: &Address) -> (bool, bool) {
-        (false, false)
+    /// `is_new_customer` is derived from the lifetime enrollment counter and
+    /// `is_btc_eth` from the token classification set by `set_token_btc_eth`,
+    /// keeping previews and enrollment in sync.
+    fn resolve_risk_flags(env: &Env, student: &Address, token: &Address) -> (bool, bool) {
+        let is_new_customer = Self::get_student_enrollment_count_internal(env, student) == 0;
+        let is_btc_eth = Self::is_btc_eth_token_internal(env, token);
+        (is_new_customer, is_btc_eth)
     }
 
     /// Computes the risk score and total surcharge (bps) for a payment.
@@ -5731,10 +5732,12 @@ impl SorobanLardContract {
             .unwrap_or_else(|| panic!("course not found"));
 
         // Reject duplicate open cases for the same (caller, course_id) pair.
-        let case_key = ArbitrationCaseKey { caller: caller.clone(), course_id: course_id.clone() };
+        let case_key = ArbitrationCaseKey {
+            caller: caller.clone(),
+            course_id: course_id.clone(),
+        };
         if env.storage().persistent().has(&case_key) {
-            let existing: ArbitrationCase =
-                env.storage().persistent().get(&case_key).unwrap();
+            let existing: ArbitrationCase = env.storage().persistent().get(&case_key).unwrap();
             if existing.status == DisputeStatus::Open {
                 panic!("arbitration case already open for this dispute");
             }
@@ -5875,7 +5878,10 @@ impl SorobanLardContract {
             .instance()
             .extend_ttl(Self::INSTANCE_TTL_THRESHOLD, Self::INSTANCE_TTL_EXTEND_TO);
 
-        let case_key = ArbitrationCaseKey { caller: caller.clone(), course_id: course_id.clone() };
+        let case_key = ArbitrationCaseKey {
+            caller: caller.clone(),
+            course_id: course_id.clone(),
+        };
         let mut case: ArbitrationCase = env
             .storage()
             .persistent()
