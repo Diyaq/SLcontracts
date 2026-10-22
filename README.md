@@ -496,3 +496,6 @@ MIT
 
 <!-- handsoff-issue-228 -->
 - #228: Review LastAdminTransferLedger cooldown for bypass via accept_admin timing
+
+<!-- handsoff-issue-229 -->
+- #229: Add negative test: approver (non-admin) cannot perform admin-only operations
