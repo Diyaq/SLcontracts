@@ -491,3 +491,8 @@ stellar contract invoke \
 ## License
 
 MIT
+
+## Handsoff notes
+
+<!-- handsoff-issue-224 -->
+- #224: Confirm max_certificates enforcement cannot be bypassed via bulk_revoke + reissue cycling
