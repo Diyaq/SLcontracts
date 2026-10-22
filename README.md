@@ -499,3 +499,6 @@ MIT
 
 <!-- handsoff-issue-202 -->
 - #202: Replace unwrap_or_else(|| panic!(...)) pattern with a shared helper macro
+
+<!-- handsoff-issue-203 -->
+- #203: Introduce a typed error enum for arbitration/dispute panics
