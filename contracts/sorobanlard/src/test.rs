@@ -10750,6 +10750,111 @@ fn test_list_courses_clamps_limit_to_max_page_size() {
     assert_eq!(small.len(), 10);
 }
 
+// =============================================================================
+// ISSUE #175: list_courses() pagination property tests
+// =============================================================================
+
+/// Deterministic xorshift64 generator. Keeps the property tests free of extra
+/// dev-dependencies, and every failing run reproduces from its seed.
+struct TestRng(u64);
+
+impl TestRng {
+    fn next_u64(&mut self) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0
+    }
+
+    /// Value in `lo..=hi`.
+    fn in_range(&mut self, lo: u32, hi: u32) -> u32 {
+        let span = u64::from(hi) - u64::from(lo) + 1;
+        lo + (self.next_u64() % span) as u32
+    }
+}
+
+/// Writes a catalog of `len` course IDs straight into `CourseList`, so
+/// pagination can be checked over large catalogs without registering each one.
+fn seed_course_catalog(env: &Env, contract_id: &Address, len: u32) -> soroban_sdk::Vec<String> {
+    let mut catalog = soroban_sdk::Vec::new(env);
+    for i in 0..len {
+        catalog.push_back(String::from_str(env, &format!("COURSE-PROP-{:04}", i)));
+    }
+    env.as_contract(contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::CourseList, &catalog);
+    });
+    catalog
+}
+
+#[test]
+fn test_list_courses_pages_cover_catalog_exactly_once() {
+    let (env, contract_id, _token_id, _admin, _sec_admin, _treasury, _instructor) = setup();
+    let client = SorobanLardContractClient::new(&env, &contract_id);
+    let max_page = SorobanLardContract::MAX_PAGE_SIZE;
+
+    for seed in 1..=64u64 {
+        let mut rng = TestRng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+        let catalog_len = rng.in_range(0, max_page * 3);
+        let catalog = seed_course_catalog(&env, &contract_id, catalog_len);
+
+        // Page through the whole catalog with a random valid limit each time.
+        let mut collected = soroban_sdk::Vec::new(&env);
+        let mut offset = 0u32;
+        loop {
+            let limit = rng.in_range(1, max_page);
+            let page = client.list_courses(&offset, &limit);
+            if page.is_empty() {
+                break;
+            }
+            assert!(page.len() <= limit);
+            for id in page.iter() {
+                collected.push_back(id);
+            }
+            offset += page.len();
+        }
+
+        // Same elements in the same order: nothing duplicated, nothing skipped.
+        assert_eq!(collected.len(), catalog.len(), "seed {seed}");
+        for i in 0..catalog.len() {
+            assert_eq!(collected.get(i), catalog.get(i), "seed {seed}, index {i}");
+        }
+    }
+}
+
+#[test]
+fn test_list_courses_offset_and_limit_past_end_never_panics() {
+    let (env, contract_id, _token_id, _admin, _sec_admin, _treasury, _instructor) = setup();
+    let client = SorobanLardContractClient::new(&env, &contract_id);
+    let max_page = SorobanLardContract::MAX_PAGE_SIZE;
+
+    // Extremes first: both arguments at u32::MAX on an empty catalog.
+    assert_eq!(client.list_courses(&u32::MAX, &u32::MAX).len(), 0);
+
+    for seed in 1..=64u64 {
+        let mut rng = TestRng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+        let catalog_len = rng.in_range(0, max_page * 2);
+        let catalog = seed_course_catalog(&env, &contract_id, catalog_len);
+
+        // Offsets and limits span the full u32 range, so many calls start or
+        // end past the catalog.
+        let offset = rng.in_range(0, u32::MAX);
+        let limit = rng.in_range(0, u32::MAX);
+        let page = client.list_courses(&offset, &limit);
+
+        let start = offset.min(catalog_len);
+        let capped_limit = limit.min(max_page);
+        let end = u64::from(start) + u64::from(capped_limit);
+        let end = end.min(u64::from(catalog_len)) as u32;
+
+        assert_eq!(page.len(), end - start, "seed {seed}");
+        for i in 0..page.len() {
+            assert_eq!(page.get(i), catalog.get(start + i), "seed {seed}, index {i}");
+        }
+    }
+}
+
 // ============================================================
 // ARBITRATION RECORD PERSISTENCE  (#255, #256, #257)
 // ============================================================
@@ -11949,4 +12054,181 @@ fn test_withdraw_earnings_with_fee_on_transfer_token_underpays_instructor() {
     assert_eq!(client.get_instructor_earnings(&instructor, &token_id), 0);
     assert_eq!(token.balance(&contract_id), 0);
     assert_eq!(token.balance(&instructor), earned - fee);
+}
+
+// ============================================================
+// INSTRUCTOR REGISTRY (#170)
+// ============================================================
+
+#[test]
+fn test_registry_lists_each_instructor_once() {
+    let (env, contract_id, token_id, admin, _sec_admin, _treasury, instructor) = setup();
+    let client = SorobanLardContractClient::new(&env, &contract_id);
+    let other = Address::generate(&env);
+
+    register_and_approve_course(
+        &env,
+        &client,
+        &token_id,
+        &admin,
+        &instructor,
+        "REG-A",
+        100_000_000,
+    );
+    register_and_approve_course(
+        &env,
+        &client,
+        &token_id,
+        &admin,
+        &instructor,
+        "REG-B",
+        100_000_000,
+    );
+    register_and_approve_course(&env, &client, &token_id, &admin, &other, "REG-C", 100_000_000);
+
+    let registry = client.get_all_instructors(&admin);
+    assert_eq!(registry.len(), 2);
+    assert_eq!(registry.get(0).unwrap(), instructor);
+    assert_eq!(registry.get(1).unwrap(), other);
+    assert_eq!(client.get_instructor_count(&admin), 2);
+}
+
+#[test]
+fn test_transferee_is_listed_once_on_first_registration() {
+    let (env, contract_id, token_id, admin, _sec_admin, _treasury, instructor) = setup();
+    let client = SorobanLardContractClient::new(&env, &contract_id);
+    let transferee = Address::generate(&env);
+
+    register_and_approve_course(
+        &env,
+        &client,
+        &token_id,
+        &admin,
+        &instructor,
+        "REG-T1",
+        100_000_000,
+    );
+    client.transfer_course(
+        &instructor,
+        &admin,
+        &String::from_str(&env, "REG-T1"),
+        &transferee,
+    );
+
+    // transfer_course does not list the new owner in the registry, so the
+    // first registration by the transferee must add them, exactly once.
+    register_and_approve_course(
+        &env,
+        &client,
+        &token_id,
+        &admin,
+        &transferee,
+        "REG-T2",
+        100_000_000,
+    );
+    register_and_approve_course(
+        &env,
+        &client,
+        &token_id,
+        &admin,
+        &transferee,
+        "REG-T3",
+        100_000_000,
+    );
+
+    let registry = client.get_all_instructors(&admin);
+    assert_eq!(registry.len(), 2);
+    assert_eq!(registry.get(0).unwrap(), instructor);
+    assert_eq!(registry.get(1).unwrap(), transferee);
+}
+
+#[test]
+fn test_pre_upgrade_instructor_is_not_relisted_without_lookup_key() {
+    let (env, contract_id, token_id, admin, _sec_admin, _treasury, instructor) = setup();
+    let client = SorobanLardContractClient::new(&env, &contract_id);
+
+    register_and_approve_course(
+        &env,
+        &client,
+        &token_id,
+        &admin,
+        &instructor,
+        "REG-L1",
+        100_000_000,
+    );
+
+    // Simulate a contract deployed before InstructorRegisteredKey existed.
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .remove(&InstructorRegisteredKey {
+                instructor: instructor.clone(),
+            });
+    });
+
+    register_and_approve_course(
+        &env,
+        &client,
+        &token_id,
+        &admin,
+        &instructor,
+        "REG-L2",
+        100_000_000,
+    );
+
+    let registry = client.get_all_instructors(&admin);
+    assert_eq!(registry.len(), 1);
+    assert_eq!(registry.get(0).unwrap(), instructor);
+}
+
+// ============================================================
+// BATCH ENROLL COST BENCHMARK (#167)
+// ============================================================
+
+/// Records the CPU and memory cost of `batch_enroll` at `MAX_BATCH_SIZE`.
+/// Ignored by default so the normal suite stays fast. Run locally with:
+///
+///   cargo test bench_batch_enroll_at_max_batch_size -- --ignored --nocapture
+///
+/// and copy the printed numbers into `docs/batch-enroll-cost.md`.
+#[test]
+#[ignore]
+fn bench_batch_enroll_at_max_batch_size() {
+    let (env, contract_id, token_id, admin, _sec_admin, _treasury, instructor) = setup();
+    let client = SorobanLardContractClient::new(&env, &contract_id);
+
+    let student = Address::generate(&env);
+    token::StellarAssetClient::new(&env, &token_id).mint(&student, &10_000_000_000_000);
+
+    let batch_size = SorobanLardContract::MAX_BATCH_SIZE;
+    let mut course_ids = soroban_sdk::Vec::new(&env);
+    for i in 0..batch_size {
+        let course_id = format!("BENCH-COURSE-{i}");
+        register_and_approve_course(
+            &env,
+            &client,
+            &token_id,
+            &admin,
+            &instructor,
+            &course_id,
+            100_000_000,
+        );
+        course_ids.push_back(String::from_str(&env, &course_id));
+    }
+
+    // Metering is only read back, so lift the default limits to keep a
+    // large batch from aborting before its cost is recorded.
+    env.cost_estimate().budget().reset_unlimited();
+    client.batch_enroll(&student, &course_ids);
+    let budget = env.cost_estimate().budget();
+
+    let last_course = format!("BENCH-COURSE-{}", batch_size - 1);
+    assert!(client.is_enrolled(&student, &String::from_str(&env, &last_course)));
+
+    std::println!(
+        "batch_enroll({}): cpu_instructions={} memory_bytes={}",
+        batch_size,
+        budget.cpu_instruction_cost(),
+        budget.memory_bytes_cost()
+    );
 }
