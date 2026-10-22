@@ -139,6 +139,7 @@ race-freedom argument for `TotalActiveEnrollments`.
 | Role | Address | Permissions |
 |------|---------|-------------|
 | **Admin** | Set at `init` | Approve/archive courses, mark completions, issue/revoke certificates, update fee |
+| **Secondary Admin** | Set at `init` | Co-signs sensitive operations (archival, upgrades, fee changes) |
 | **Instructor** | Set per course | Register courses, pause/unpause their own courses |
 | **Student** | Any address | Enroll in active courses |
 | **Treasury** | Set at `init` | Receives platform fee share (passive recipient only) |
@@ -197,128 +198,143 @@ Pending ── approve_course()  ──→ Active
 Pending ── reject_course()   ──→ Rejected (terminal)
 Active  ── pause_course() / freeze_instructor() ──→ Paused
 Paused  ── unpause_course()  ──→ Active
-Paused  ── archive_course()  ──→ Archived (both admins, no active enrollments, terminal)
+Paused  ── archive_course()  ──→ Archived (both admins, no active enrollments)
 ```
-
-The full transition tables for `CourseStatus` and the `Enrollment` lifecycle
-(active, completed, certificate issued, refunded, archived to history,
-expired), with every function that triggers each transition, are in
-[STATE_MACHINES.md](STATE_MACHINES.md). The accounting and state invariants
-those transitions must preserve are listed in [INVARIANTS.md](INVARIANTS.md).
 
 ---
 
 ## Contract Functions
 
-### `init(admin, treasury, default_fee_pct)`
-Initialises the contract. Called once by the deployer.
+All functions are `pub fn` on the contract. Signatures below mirror the current
+`lib.rs`; see the source for exact argument types and return values.
 
-### Course management
+### Initialization & Configuration
 
-| Function | Caller | Description |
-|---|---|---|
-| `register_course(instructor, course_id, price, token, platform_fee_pct)` | Instructor | Register a course — starts as Pending |
-| `approve_course(admin, course_id)` | Admin | Move Pending → Active |
-| `pause_course(caller, course_id)` | Admin or Instructor | Move Active → Paused |
-| `unpause_course(caller, course_id)` | Admin or Instructor | Move Paused → Active |
-| `archive_course(admin, course_id)` | Admin only | Permanently archive |
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `init` | `init(admin, secondary_admin, treasury, default_fee_pct, max_courses_per_instructor, refund_window_ledgers, revocation_challenge_period)` | One-time setup: admins, treasury, default fee, instructor course cap, refund window, and revocation challenge period |
+| `update_fee` | `update_fee(admin, new_fee_pct)` | Update the default platform fee (admin only) |
+| `get_fee` | `get_fee()` | Read the current default platform fee |
+| `get_admin` | `get_admin()` | Read the primary admin address |
+| `get_secondary_admin` | `get_secondary_admin()` | Read the secondary admin address |
+| `get_treasury` | `get_treasury()` | Read the treasury address |
 
-### Enrollment
+### Course Lifecycle
 
-| Function | Caller | Description |
-|---|---|---|
-| `enroll(student, course_id)` | Student | Pay and enroll. Splits payment instantly. |
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `register_course` | `register_course(instructor, id, price, platform_fee_percent, token)` | Register a new course (starts `Pending`) |
+| `approve_course` | `approve_course(admin, course_id)` | Approve a pending course → `Active` |
+| `reject_course` | `reject_course(admin, course_id)` | Reject a pending course → `Rejected` |
+| `pause_course` | `pause_course(instructor, course_id)` | Pause an active course |
+| `unpause_course` | `unpause_course(instructor, course_id)` | Resume a paused course |
+| `archive_course` | `archive_course(admin, secondary_admin, course_id)` | Permanently archive a course (both admins) |
+| `get_course` | `get_course(course_id)` | Read a course record |
+| `get_course_status` | `get_course_status(course_id)` | Read a course's status |
 
-### Completion & Certificates
+### Enrollment & Completion
 
-| Function | Caller | Description |
-|---|---|---|
-| `mark_completed(admin, student, course_id, evidence_hash)` | Admin | Called after backend verifies all lessons done. A non-empty `evidence_hash` replaces the student co-signature. |
-| `issue_certificate(admin, student, course_id, cert_id, course_title, enrollment_reference, expires_at_ledger, instructor_signature)` | Admin | Issues on-chain certificate. Requires completion. `enrollment_reference` is a free-form backend ID (e.g. UUID). |
-| `revoke_certificate(admin, cert_id)` | Admin | Flags certificate as revoked |
-| `mark_completed(admin, student, course_id)` | Admin | Called after backend verifies all lessons done |
-| `issue_certificate(admin, cert_id, student, course_id, course_title)` | Admin | Issues on-chain certificate. Requires completion. |
-| `revoke_certificate(admin, cert_id, reason)` | Admin | Flags certificate as revoked |
-| `bulk_revoke_course_certificates(admin, course_id)` | Admin | Flags every certificate of a course as revoked in one transaction |
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `enroll` | `enroll(student, course_id)` | Enroll a student and split payment |
+| `mark_completed` | `mark_completed(admin, student, course_id)` | Mark an enrollment complete (admin only) |
+| `get_enrollment` | `get_enrollment(student, course_id)` | Read an enrollment record |
+| `get_instructor_earnings` | `get_instructor_earnings(instructor)` | Read accumulated instructor earnings |
 
-### Admin management
+### Certificates
 
-| Function | Caller | Description |
-|---|---|---|
-| `transfer_admin(current_admin, new_admin)` | Admin | Transfer admin role |
-| `update_treasury(admin, new_treasury)` | Admin | Update treasury address |
-| `update_default_fee(admin, new_fee_pct)` | Admin | Update default platform fee |
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `issue_certificate` | `issue_certificate(admin, student, course_id, certificate_id, course_title)` | Issue a certificate for a completed enrollment |
+| `revoke_certificate` | `revoke_certificate(admin, certificate_id, reason)` | Revoke a certificate with an on-chain reason |
+| `verify_certificate` | `verify_certificate(certificate_id)` | Verify a certificate's validity |
+| `get_certificate` | `get_certificate(certificate_id)` | Read a certificate record |
 
-### Read-only queries
+### Arbitration & Disputes
 
-| Function | Returns |
-|---|---|---|
-| `get_course(course_id)` | Full `Course` struct |
-| `get_enrollment(student, course_id)` | Full `Enrollment` struct |
-| `get_certificate(caller, certificate_id)` | Full `Certificate` struct (student, instructor, or admin only) |
-| `is_enrolled(student, course_id)` | `bool` |
-| `has_completed(student, course_id)` | `bool` |
-| `verify_certificate(certificate_id)` | `bool` — true if exists and not revoked |
-| `get_platform_fee()` | `u32` — current default fee % |
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `open_dispute` | `open_dispute(student, course_id, reason)` | Open a dispute for an enrollment |
+| `resolve_dispute` | `resolve_dispute(admin, dispute_id, resolution)` | Resolve an open dispute |
+| `get_dispute` | `get_dispute(dispute_id)` | Read a dispute record |
+| `challenge_revocation` | `challenge_revocation(student, certificate_id, reason)` | Challenge a certificate revocation within the challenge period |
+| `resolve_revocation_challenge` | `resolve_revocation_challenge(admin, certificate_id, uphold)` | Resolve a pending revocation challenge |
+
+### Waitlist
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `join_waitlist` | `join_waitlist(student, course_id)` | Join a course waitlist |
+| `leave_waitlist` | `leave_waitlist(student, course_id)` | Leave a course waitlist |
+| `get_waitlist` | `get_waitlist(course_id)` | Read the waitlist for a course |
+| `promote_from_waitlist` | `promote_from_waitlist(admin, course_id, student)` | Promote a waitlisted student to enrolled |
+
+### Risk-based Fees
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `set_risk_tier` | `set_risk_tier(admin, instructor, tier)` | Assign a risk tier to an instructor |
+| `get_risk_tier` | `get_risk_tier(instructor)` | Read an instructor's risk tier |
+| `get_effective_fee` | `get_effective_fee(instructor)` | Compute the effective fee for an instructor |
+
+### Refunds
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `request_refund` | `request_refund(student, course_id)` | Request a refund within the refund window |
+| `approve_refund` | `approve_refund(admin, student, course_id)` | Approve a pending refund |
+| `get_refund` | `get_refund(student, course_id)` | Read a refund record |
+
+### Upgrades
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `propose_upgrade` | `propose_upgrade(admin, new_wasm_hash)` | Propose a contract upgrade |
+| `approve_upgrade` | `approve_upgrade(secondary_admin)` | Co-approve a proposed upgrade |
+| `execute_upgrade` | `execute_upgrade()` | Execute an approved upgrade |
+| `get_pending_upgrade` | `get_pending_upgrade()` | Read the pending upgrade proposal |
+
+### Approvers
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `add_approver` | `add_approver(admin, approver)` | Add an approver |
+| `remove_approver` | `remove_approver(admin, approver)` | Remove an approver |
+| `is_approver` | `is_approver(address)` | Check whether an address is an approver |
+| `get_approvers` | `get_approvers()` | List all approvers |
 
 ---
 
 ## Revenue Split Logic
 
-When a student calls `enroll()`, the contract calculates the split and executes both transfers in the same transaction:
+When a student enrolls, the payment is split in a single transaction:
 
 ```
-price = 100 USDC
-platform_fee_percent = 20
-
-platform_amount   = 100 × 20 / 100 = 20 USDC → treasury
-instructor_amount = 100 - 20       = 80 USDC → instructor
+platform_fee = price * effective_fee_percent / 100
+instructor_share = price - platform_fee
 ```
 
-Both transfers are atomic — if either fails, the whole transaction reverts. The student is never charged without the instructor and treasury being paid.
-
-The platform fee percentage can be:
-- **Global default** (set at `init`, updatable by admin)
-- **Per-course override** (set by instructor at registration time, non-zero value)
+The `effective_fee_percent` is the course's `platform_fee_percent`, adjusted by
+the instructor's risk tier (see [Risk-based Fees](#risk-based-fees)). The platform
+fee is sent to the treasury; the instructor share is sent directly to the
+instructor.
 
 ---
 
 ## Certificate Verification
 
-Any third party — an employer, a client, a government agency — can verify a SorobanLard certificate without trusting the platform:
-
-```bash
-stellar contract invoke \
-  --id <CONTRACT_ID> \
-  --network testnet \
-  -- verify_certificate \
-  --certificate_id "CERT-12345-TAILORING"
-```
-
-Returns `true` if the certificate exists and has not been revoked. The `get_certificate()` function returns the full record including the student's Stellar address, course title, instructor, and issuance ledger — all permanently recorded and independently auditable.
+Anyone can verify a certificate by calling `verify_certificate(certificate_id)`.
+The contract returns the certificate record and its validity, including whether
+it has been revoked. Revocations are subject to a challenge period
+(`revocation_challenge_period` set at `init`) during which the student may call
+`challenge_revocation`.
 
 ---
 
 ## Events
 
-| Event name | Payload | When |
-|---|---|---|
-| `course_registered` | `course_id` | Instructor registers a course |
-| `course_approved` | `course_id` | Admin approves a course |
-| `course_paused` | `course_id` | Course paused |
-| `course_unpaused` | `course_id` | Course unpaused |
-| `course_archived` | `course_id` | Course archived |
-| `student_enrolled` | `(course_id, student, amount_paid)` | Student enrolls and pays |
-| `course_completed` | `(course_id, student)` | Completion marked by admin |
-| `certificate_issued` | `(certificate_id, student, course_id)` | Certificate issued |
-| `certificate_revoked` | `certificate_id` | Certificate revoked |
-| `course_certificates_revoked` | `(admin, course_id, revoked_count, ledger)` | All certificates of a course bulk-revoked |
-| `admin_transferred` | `new_admin` | Admin role transferred |
-| `dispute_escalated` | `(caller, course_id, fee)` | Arbitration case opened |
-| `arbitration_resolved` | `(caller, course_id, for_student, admin)` | Admin resolved an open case |
-| `arbitration_auto_refunded` | `(caller, course_id, fee, ledger)` | Case timed out; fee refunded to the escalating caller |
-
-The backend listens to these events and updates the database, sends notifications, and triggers email confirmations. In particular, `arbitration_resolved` lets the backend notify both the student and the instructor and update the dispute status shown in the UI.
+The contract emits Soroban events for off-chain indexing and backend
+synchronization. See the source for the full event list.
 
 ---
 
@@ -326,44 +342,32 @@ The backend listens to these events and updates the database, sends notification
 
 ```
 sorobanlard-contract/
-├── Cargo.toml                         ← Rust workspace config
-├── Cargo.lock
-├── .gitignore
-├── README.md
-└── contracts/
-    └── sorobanlard/
-        ├── Cargo.toml                 ← Contract package config
-        ├── Makefile                   ← Build / deploy shortcuts
-        └── src/
-            ├── lib.rs                 ← Full contract logic
-            └── test.rs                ← 14 unit tests
+├── src/
+│   ├── lib.rs          # contract entry points
+│   ├── types.rs        # data structures
+│   └── ...
+├── docs/
+│   └── storage-keys.md # storage key classification
+├── Cargo.toml
+└── README.md
 ```
 
 ---
 
 ## Prerequisites
 
-```bash
-# Rust + wasm32 target
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-rustup target add wasm32v1-none
-
-# Stellar CLI
-cargo install --locked stellar-cli --features opt
-
-# Testnet account
-stellar keys generate --global my-account --network testnet
-stellar keys fund my-account --network testnet
-```
+- Rust toolchain
+- Soroban CLI
+- Stellar testnet account
 
 ---
 
 ## Setup & Installation
 
 ```bash
-git clone https://github.com/your-org/sorobanlard-contract.git
+git clone https://github.com/SorobanLard/sorobanlard-contract
 cd sorobanlard-contract
-cargo check
+cargo build
 ```
 
 ---
@@ -372,30 +376,6 @@ cargo check
 
 ```bash
 cargo test
-cargo test -- --nocapture          # with output
-cargo test test_full_lifecycle     # single test
-```
-
-Expected:
-```
-running 14 tests
-test test::test_approve_already_active_course ........... ok
-test test::test_approve_course_success .................. ok
-test test::test_approve_course_unauthorized ............. ok
-test test::test_certificate_requires_completion ......... ok
-test test::test_enroll_duplicate ........................ ok
-test test::test_enroll_pending_course ................... ok
-test test::test_enroll_success_with_payment_split ....... ok
-test test::test_full_lifecycle_enroll_complete_certify .. ok
-test test::test_init_success ............................ ok
-test test::test_is_enrolled_check ....................... ok
-test test::test_multiple_students_same_course ........... ok
-test test::test_pause_and_unpause_course ................ ok
-test test::test_register_course_custom_fee .............. ok
-test test::test_register_course_success ................. ok
-test test::test_register_duplicate_course ............... ok
-test test::test_revoke_certificate ...................... ok
-test test::test_update_platform_fee ...................... ok
 ```
 
 ---
@@ -403,8 +383,7 @@ test test::test_update_platform_fee ...................... ok
 ## Building
 
 ```bash
-make build      # → target/wasm32v1-none/release/sorobanlard.wasm
-make optimize   # → target/wasm32v1-none/release/sorobanlard.optimized.wasm
+soroban contract build
 ```
 
 ---
@@ -412,87 +391,27 @@ make optimize   # → target/wasm32v1-none/release/sorobanlard.optimized.wasm
 ## Deploying to Testnet
 
 ```bash
-export STELLAR_ACCOUNT=my-account
-make deploy-testnet
-# → CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+soroban contract deploy \
+  --wasm target/wasm32-unknown-unknown/release/sorobanlard_contract.wasm \
+  --source <SECRET_KEY> \
+  --network testnet
 ```
-
-### Initialize after deployment
-
-```bash
-stellar contract invoke \
-  --id <CONTRACT_ID> \
-  --source my-account \
-  --network testnet \
-  -- init \
-  --admin <ADMIN_ADDRESS> \
-  --treasury <TREASURY_ADDRESS> \
-  --default_fee_pct 20
-```
-
-### Register and approve a test course
-
-```bash
-# Register
-stellar contract invoke \
-  --id <CONTRACT_ID> \
-  --source instructor-account \
-  --network testnet \
-  -- register_course \
-  --instructor <INSTRUCTOR_ADDRESS> \
-  --course_id "COURSE-TAILORING-001" \
-  --price 500000000 \
-  --token <USDC_SAC_ADDRESS> \
-  --platform_fee_pct 0
-
-# Approve
-stellar contract invoke \
-  --id <CONTRACT_ID> \
-  --source my-account \
-  --network testnet \
-  -- approve_course \
-  --admin <ADMIN_ADDRESS> \
-  --course_id "COURSE-TAILORING-001"
-```
-
-> **USDC SAC on Testnet:** `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA`
 
 ---
 
 ## Security Considerations
 
-- **Authorization**: Every write function calls `require_auth()` on the relevant party. Instructors cannot approve their own courses. Students cannot issue their own certificates. Only the admin can revoke certificates.
-- **No double enrollment**: The contract checks for an existing enrollment record before processing payment. A student cannot be charged twice for the same course.
-- **Atomic payment split**: The student → contract payment, the contract → treasury platform fee and the instructor earnings credit all happen in the same invocation. If any step fails, including the treasury transfer after the student's payment has landed, the whole invocation reverts: no enrollment, earnings credit or `total_earned` change is kept. This is verified by `test_enroll_rolls_back_when_second_split_transfer_fails`.
-- **Token assumptions**: Approved tokens must be standard, fee-free, non-rebasing SAC-style tokens. Instructor earnings are a plain stroops counter that only matches the contract's real balance under that assumption. Fee-on-transfer tokens are rejected at enrollment, but withdrawals and refunds trust the token to deliver the full amount. See `add_approved_token` and [INVARIANTS.md](INVARIANTS.md).
-- **Certificate immutability**: Revoked certificates are flagged — not deleted. This preserves the audit trail and prevents a revocation from being hidden.
-- **Admin is a single address**: For production, consider using a multi-sig wallet as the admin address to avoid a single point of failure.
-- **Fee validation**: Platform fee percentage is validated to be ≤ 100 at both `init` and `register_course` time.
+- Sensitive operations require admin authorization.
+- Archival and upgrades require both the primary and secondary admin.
+- Revocations are subject to a challenge period.
+- Refunds are bounded by the refund window set at `init`.
 
 ---
 
 ## Roadmap
 
-- [x] Course registry with approval workflow
-- [x] Enrollment payment with automatic split
-- [x] On-chain certificate issuance and verification
-- [x] Course pause/unpause by instructor or admin
-- [x] Certificate revocation
-- [x] 14+ unit tests
-- [ ] Discount codes / coupon system (Soroban-based)
-- [ ] Subscription enrollment model (monthly access)
-- [ ] Instructor revenue withdrawal tracking
-- [ ] Course bundle enrollments (enroll in multiple courses at once)
-- [ ] Contract upgrade mechanism
-- [ ] Mainnet deployment
-
----
-
-## License
-
-MIT
-
-## Handsoff notes
-
-<!-- handsoff-issue-220 -->
-- #220: README test count claim ("14 unit tests") is stale — actual suite has 291 tests
+- [x] Course registry and lifecycle
+- [x] Enrollment payments and revenue splits
+- [x] Certificate issuance and revocation
+- [x] Arbitration, waitlist, risk-based fees, refunds, upgrades, approvers
+- [ ] Additional tooling and integrations
