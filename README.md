@@ -499,3 +499,6 @@ MIT
 
 <!-- handsoff-issue-229 -->
 - #229: Add negative test: approver (non-admin) cannot perform admin-only operations
+
+<!-- handsoff-issue-230 -->
+- #230: Confirm withdraw_tokens cannot drain funds owed to instructors/students
