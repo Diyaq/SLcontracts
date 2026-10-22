@@ -491,3 +491,8 @@ stellar contract invoke \
 ## License
 
 MIT
+
+## Handsoff notes
+
+<!-- handsoff-issue-235 -->
+- #235: Add a cross-contract call failure/panic differentiation test for enroll_internal
