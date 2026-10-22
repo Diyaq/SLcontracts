@@ -491,3 +491,8 @@ stellar contract invoke \
 ## License
 
 MIT
+
+## Handsoff notes
+
+<!-- handsoff-issue-220 -->
+- #220: README test count claim ("14 unit tests") is stale — actual suite has 291 tests
