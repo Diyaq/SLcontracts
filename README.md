@@ -368,6 +368,14 @@ cd sorobanlard-contract
 cargo check
 ```
 
+Deployment variables that the Makefile reads (such as `STELLAR_ACCOUNT`) are listed in [`contracts/sorobanlard/.env.example`](contracts/sorobanlard/.env.example). Copy it to `.env` in that directory and export it before running `make deploy-testnet`:
+
+```bash
+cd contracts/sorobanlard
+cp .env.example .env
+set -a; source .env; set +a
+```
+
 ---
 
 ## Running Tests
@@ -509,7 +517,8 @@ stellar contract invoke \
 - **Atomic payment split**: The student → contract payment, the contract → treasury platform fee and the instructor earnings credit all happen in the same invocation. If any step fails, including the treasury transfer after the student's payment has landed, the whole invocation reverts: no enrollment, earnings credit or `total_earned` change is kept. This is verified by `test_enroll_rolls_back_when_second_split_transfer_fails`.
 - **Token assumptions**: Approved tokens must be standard, fee-free, non-rebasing SAC-style tokens. Instructor earnings are a plain stroops counter that only matches the contract's real balance under that assumption. Fee-on-transfer tokens are rejected at enrollment, but withdrawals and refunds trust the token to deliver the full amount. See `add_approved_token` and [INVARIANTS.md](INVARIANTS.md).
 - **Certificate immutability**: Revoked certificates are flagged — not deleted. This preserves the audit trail and prevents a revocation from being hidden.
-- **Admin is a single address**: For production, consider using a multi-sig wallet as the admin address to avoid a single point of failure.
+- **Admin is a single address**: For production, consider using a multi-sig wallet as the admin address to avoid a single point of failure. Privileged operations need both `admin` and `secondary_admin`, so each role should be a separate multisig. See [docs/admin-key-management.md](docs/admin-key-management.md) for the pattern and init-time rules.
+- **Pre-launch and upgrades**: Review [MAINNET_CHECKLIST.md](MAINNET_CHECKLIST.md) before deploying to mainnet, and rehearse every upgrade with [docs/upgrade-runbook.md](docs/upgrade-runbook.md).
 - **Fee validation**: Platform fee percentage is validated to be ≤ 100 at both `init` and `register_course` time.
 
 ---
