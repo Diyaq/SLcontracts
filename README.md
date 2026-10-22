@@ -491,3 +491,8 @@ stellar contract invoke \
 ## License
 
 MIT
+
+## Handsoff notes
+
+<!-- handsoff-issue-218 -->
+- #218: Events table in README is missing ~10 events emitted by lib.rs
