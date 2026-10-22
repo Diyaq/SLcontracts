@@ -496,3 +496,6 @@ MIT
 
 <!-- handsoff-issue-218 -->
 - #218: Events table in README is missing ~10 events emitted by lib.rs
+
+<!-- handsoff-issue-219 -->
+- #219: Data Structures section in README omits most Course/Enrollment/Certificate fields
