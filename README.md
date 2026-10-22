@@ -491,3 +491,8 @@ stellar contract invoke \
 ## License
 
 MIT
+
+## Handsoff notes
+
+<!-- handsoff-issue-208 -->
+- #208: Expand Security Considerations section to cover arbitration, risk fees, and upgrade timelocks
