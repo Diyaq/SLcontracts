@@ -502,3 +502,6 @@ MIT
 
 <!-- handsoff-issue-226 -->
 - #226: Add a check that ApprovedToken removal does not retroactively break existing courses
+
+<!-- handsoff-issue-227 -->
+- #227: Review set_risk_config_enabled toggling mid-flight for fee consistency
