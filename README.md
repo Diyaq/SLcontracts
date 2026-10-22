@@ -491,3 +491,8 @@ stellar contract invoke \
 ## License
 
 MIT
+
+## Handsoff notes
+
+<!-- handsoff-issue-228 -->
+- #228: Review LastAdminTransferLedger cooldown for bypass via accept_admin timing
