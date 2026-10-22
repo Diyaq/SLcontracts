@@ -496,3 +496,6 @@ MIT
 
 <!-- handsoff-issue-232 -->
 - #232: Review panic-based error handling: client apps cannot distinguish failure reasons programmatically
+
+<!-- handsoff-issue-233 -->
+- #233: Add explicit test that blocked students cannot bypass via re_enroll after block
