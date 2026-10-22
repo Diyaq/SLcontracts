@@ -420,3 +420,6 @@ soroban contract deploy \
 
 <!-- handsoff-issue-222 -->
 - #222: Add fuzz-style test for register_course course_id character validation
+
+<!-- handsoff-issue-223 -->
+- #223: Security review: single compromised admin's blast radius with SecondaryAdmin absent from read-paths
