@@ -491,3 +491,8 @@ stellar contract invoke \
 ## License
 
 MIT
+
+## Handsoff notes
+
+<!-- handsoff-issue-232 -->
+- #232: Review panic-based error handling: client apps cannot distinguish failure reasons programmatically
