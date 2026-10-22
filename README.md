@@ -499,3 +499,6 @@ MIT
 
 <!-- handsoff-issue-205 -->
 - #205: Introduce a typed error enum for enrollment/payment panics
+
+<!-- handsoff-issue-206 -->
+- #206: Introduce a typed #[contracterror] enum for course-lifecycle panics
