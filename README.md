@@ -491,3 +491,8 @@ stellar contract invoke \
 ## License
 
 MIT
+
+## Handsoff notes
+
+<!-- handsoff-issue-198 -->
+- #198: Add explicit error for calling get_risk_fee_config or related admin getters before they're configured
