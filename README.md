@@ -502,3 +502,6 @@ MIT
 
 <!-- handsoff-issue-206 -->
 - #206: Introduce a typed #[contracterror] enum for course-lifecycle panics
+
+<!-- handsoff-issue-207 -->
+- #207: Add a state-machine diagram for DisputeStatus / ArbitrationCase lifecycle
