@@ -415,3 +415,8 @@ soroban contract deploy \
 - [x] Certificate issuance and revocation
 - [x] Arbitration, waitlist, risk-based fees, refunds, upgrades, approvers
 - [ ] Additional tooling and integrations
+
+## Handsoff notes
+
+<!-- handsoff-issue-222 -->
+- #222: Add fuzz-style test for register_course course_id character validation
