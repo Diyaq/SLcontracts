@@ -496,3 +496,6 @@ MIT
 
 <!-- handsoff-issue-200 -->
 - #200: Add defensive checked arithmetic audit pass beyond the existing checked_sub calls
+
+<!-- handsoff-issue-202 -->
+- #202: Replace unwrap_or_else(|| panic!(...)) pattern with a shared helper macro
