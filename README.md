@@ -496,3 +496,6 @@ MIT
 
 <!-- handsoff-issue-204 -->
 - #204: Introduce a typed error enum for certificate issuance/revocation panics
+
+<!-- handsoff-issue-205 -->
+- #205: Introduce a typed error enum for enrollment/payment panics
