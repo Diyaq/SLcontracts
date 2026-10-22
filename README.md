@@ -499,3 +499,6 @@ MIT
 
 <!-- handsoff-issue-233 -->
 - #233: Add explicit test that blocked students cannot bypass via re_enroll after block
+
+<!-- handsoff-issue-234 -->
+- #234: Review re-propose-upgrade pattern for timelock reset abuse
