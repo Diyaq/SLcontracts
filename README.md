@@ -491,3 +491,8 @@ stellar contract invoke \
 ## License
 
 MIT
+
+## Handsoff notes
+
+<!-- handsoff-issue-213 -->
+- #213: Add rustdoc examples to the public contract interface for docs.rs-style generation
