@@ -496,3 +496,6 @@ MIT
 
 <!-- handsoff-issue-224 -->
 - #224: Confirm max_certificates enforcement cannot be bypassed via bulk_revoke + reissue cycling
+
+<!-- handsoff-issue-225 -->
+- #225: Review set_fee_config retroactivity vs. Enrollment.platform_amount snapshot
