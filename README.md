@@ -499,3 +499,6 @@ MIT
 
 <!-- handsoff-issue-225 -->
 - #225: Review set_fee_config retroactivity vs. Enrollment.platform_amount snapshot
+
+<!-- handsoff-issue-226 -->
+- #226: Add a check that ApprovedToken removal does not retroactively break existing courses
