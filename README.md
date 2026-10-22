@@ -502,3 +502,6 @@ MIT
 
 <!-- handsoff-issue-230 -->
 - #230: Confirm withdraw_tokens cannot drain funds owed to instructors/students
+
+<!-- handsoff-issue-231 -->
+- #231: Review integer overflow surface in revenue split and risk surcharge math
