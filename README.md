@@ -491,3 +491,8 @@ stellar contract invoke \
 ## License
 
 MIT
+
+## Handsoff notes
+
+<!-- handsoff-issue-204 -->
+- #204: Introduce a typed error enum for certificate issuance/revocation panics
