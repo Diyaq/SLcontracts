@@ -15,9 +15,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: stellar/actions/setup-rust@master
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          rust-version: stable
+          toolchain: stable
       - run: cargo test --verbose
         env:
           RUST_BACKTRACE: 1
@@ -27,9 +27,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: stellar/actions/setup-rust@master
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          rust-version: stable
+          toolchain: stable
       - run: cargo clippy --all-targets --all-features -- -D warnings
 
   fmt:
@@ -37,9 +37,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: stellar/actions/setup-rust@master
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          rust-version: stable
+          toolchain: stable
       - run: cargo fmt --all -- --check
 
   docs-lint:
@@ -71,14 +71,40 @@ jobs:
           fi
           echo "README architecture diagram references all required subsystems."
 
+  panic-message-style:
+    name: Panic Message Style
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check panic message style
+        run: |
+          status=0
+          while IFS= read -r line; do
+            file="${line%%:*}"
+            rest="${line#*:}"
+            lineno="${rest%%:*}"
+            msg="${rest#*:}"
+            literal=$(printf '%s' "$msg" | sed -n 's/.*"\(.*\)".*/\1/p')
+            [ -z "$literal" ] && continue
+            if printf '%s' "$literal" | grep -q '\.$'; then
+              echo "$file:$lineno: panic message must not end with a period: $literal"
+              status=1
+            fi
+            if printf '%s' "$literal" | grep -q '^[A-Z]'; then
+              echo "$file:$lineno: panic message must start lowercase: $literal"
+              status=1
+            fi
+          done < <(grep -rnE 'panic!\(' --include='lib.rs' contracts/sorobanlard/src)
+          exit $status
+
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: stellar/actions/setup-rust@master
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          rust-version: stable
+          toolchain: stable
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov
       - name: Generate coverage
@@ -94,9 +120,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: stellar/actions/setup-rust@master
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          rust-version: stable
+          toolchain: stable
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
       - name: Build WASM contracts
@@ -112,3 +138,26 @@ jobs:
               exit 1
             fi
           done
+
+  audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      # Reads Cargo.lock and .cargo/audit.toml. Policy for advisories with no fix
+      # is documented in CONTRIBUTING.md.
+      - name: Audit Cargo.lock against RustSec
+        run: cargo audit
+
+  readme-api:
+    name: README API Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check README references match lib.rs signatures
+        run: python3 scripts/check_readme_api.py
