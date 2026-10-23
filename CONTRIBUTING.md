@@ -25,10 +25,21 @@ A compile-time assertion fails the build if either key enum exceeds the
 - Add or update tests for any behaviour change, especially new events, guards,
   and storage keys.
 - Update `README.md` when a public contract function or emitted event changes.
-  CI runs `python3 scripts/check_readme_api.py`, which fails if a documented
-  `name(...)` call has a different number of arguments than the matching
-  `pub fn` in `lib.rs`. It only warns about public functions the README does
-  not mention yet.
+## Continuous integration
+
+Every push and pull request runs the CI workflow defined in
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml), which executes
+`cargo test --workspace` and caches the cargo registry and `target`
+directories to keep runs fast.
+
+Maintainers should configure branch protection on `main` so the CI check is
+**required for merge**. This is applied in the repository settings (Settings →
+Branches → branch protection rules) and is not part of the code in this repo.
+
+CI runs `python3 scripts/check_readme_api.py`, which fails if a documented
+`name(...)` call has a different number of arguments than the matching
+`pub fn` in `lib.rs`. It only warns about public functions the README does
+not mention yet.
 
 ## Dependency advisories
 
