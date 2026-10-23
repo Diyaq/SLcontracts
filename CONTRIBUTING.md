@@ -25,7 +25,6 @@ A compile-time assertion fails the build if either key enum exceeds the
 - Add or update tests for any behaviour change, especially new events, guards,
   and storage keys.
 - Update `README.md` when a public contract function or emitted event changes.
-
 ## Continuous integration
 
 Every push and pull request runs the CI workflow defined in
@@ -36,3 +35,21 @@ directories to keep runs fast.
 Maintainers should configure branch protection on `main` so the CI check is
 **required for merge**. This is applied in the repository settings (Settings →
 Branches → branch protection rules) and is not part of the code in this repo.
+
+CI runs `python3 scripts/check_readme_api.py`, which fails if a documented
+`name(...)` call has a different number of arguments than the matching
+`pub fn` in `lib.rs`. It only warns about public functions the README does
+not mention yet.
+
+## Dependency advisories
+
+CI runs `cargo audit` against `Cargo.lock` on every push and pull request.
+
+- A vulnerability with a fix available must be resolved by upgrading the
+  dependency. Do not ignore it.
+- An advisory with **no available fix** may be accepted by adding its ID to
+  `ignore` in [`.cargo/audit.toml`](.cargo/audit.toml). Each entry must have a
+  comment giving the advisory's reason for acceptance, the affected crate,
+  and the date it should next be reviewed.
+- Ignored advisories are reviewed when the dependency is upgraded and at least
+  once per release. Remove the entry as soon as a fix is available.
