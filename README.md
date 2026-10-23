@@ -546,6 +546,12 @@ MIT
 
 ## Handsoff notes
 
+<!-- handsoff-issue-218 -->
+- #218: Events table in README is missing ~10 events emitted by lib.rs
+
+<!-- handsoff-issue-219 -->
+- #219: Data Structures section in README omits most Course/Enrollment/Certificate fields
+
 <!-- handsoff-issue-198 -->
 - #198: Add explicit error for calling get_risk_fee_config or related admin getters before they're configured
 
