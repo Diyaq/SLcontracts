@@ -554,6 +554,15 @@ MIT
 
 ## Handsoff notes
 
+<!-- handsoff-issue-232 -->
+- #232: Review panic-based error handling: client apps cannot distinguish failure reasons programmatically
+
+<!-- handsoff-issue-233 -->
+- #233: Add explicit test that blocked students cannot bypass via re_enroll after block
+
+<!-- handsoff-issue-234 -->
+- #234: Review re-propose-upgrade pattern for timelock reset abuse
+
 <!-- handsoff-issue-228 -->
 - #228: Review LastAdminTransferLedger cooldown for bypass via accept_admin timing
 
