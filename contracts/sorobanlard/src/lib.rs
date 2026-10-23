@@ -4580,7 +4580,7 @@ impl SorobanLardContract {
             .checked_sub(enrollment.enrolled_at_ledger)
             .unwrap_or(0);
 
-        if elapsed > refund_window {
+        if elapsed >= refund_window {
             panic!("refund window has expired");
         }
 
