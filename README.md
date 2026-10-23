@@ -546,6 +546,9 @@ MIT
 
 ## Handsoff notes
 
+<!-- handsoff-issue-235 -->
+- #235: Add a cross-contract call failure/panic differentiation test for enroll_internal
+
 <!-- handsoff-issue-200 -->
 - #200: Add defensive checked arithmetic audit pass beyond the existing checked_sub calls
 
