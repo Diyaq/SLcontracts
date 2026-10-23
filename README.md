@@ -543,3 +543,17 @@ stellar contract invoke \
 ## License
 
 MIT
+
+## Handsoff notes
+
+<!-- handsoff-issue-224 -->
+- #224: Confirm max_certificates enforcement cannot be bypassed via bulk_revoke + reissue cycling
+
+<!-- handsoff-issue-225 -->
+- #225: Review set_fee_config retroactivity vs. Enrollment.platform_amount snapshot
+
+<!-- handsoff-issue-226 -->
+- #226: Add a check that ApprovedToken removal does not retroactively break existing courses
+
+<!-- handsoff-issue-227 -->
+- #227: Review set_risk_config_enabled toggling mid-flight for fee consistency
