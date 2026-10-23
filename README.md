@@ -546,6 +546,12 @@ MIT
 
 ## Handsoff notes
 
+<!-- handsoff-issue-198 -->
+- #198: Add explicit error for calling get_risk_fee_config or related admin getters before they're configured
+
+<!-- handsoff-issue-199 -->
+- #199: Standardize "not found" vs "does not exist" vs implicit None-returns across read-only queries
+
 <!-- handsoff-issue-224 -->
 - #224: Confirm max_certificates enforcement cannot be bypassed via bulk_revoke + reissue cycling
 
