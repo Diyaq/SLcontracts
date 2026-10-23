@@ -42,6 +42,35 @@ jobs:
           toolchain: stable
       - run: cargo fmt --all -- --check
 
+  docs-lint:
+    name: Docs Lint (architecture diagram)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify README architecture diagram covers all subsystems
+        run: |
+          set -euo pipefail
+          if [ ! -f README.md ]; then
+            echo "ERROR: README.md not found"
+            exit 1
+          fi
+          if ! grep -q 'Architecture' README.md; then
+            echo "ERROR: README.md is missing an Architecture section"
+            exit 1
+          fi
+          missing=0
+          for subsystem in "Course Registry" "Enrollment" "Payment" "Certificate" "Arbitration" "Waitlist" "Fee"; do
+            if ! grep -qi "$subsystem" README.md; then
+              echo "ERROR: README architecture diagram is missing subsystem: $subsystem"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "Update the architecture diagram in README.md to include all subsystems."
+            exit 1
+          fi
+          echo "README architecture diagram references all required subsystems."
+
   panic-message-style:
     name: Panic Message Style
     runs-on: ubuntu-latest

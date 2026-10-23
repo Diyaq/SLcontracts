@@ -134,6 +134,13 @@ race-freedom argument for `TotalActiveEnrollments`.
     course               (auto-split)        verifies completion
 ```
 
+```
+┌────────────┐   ┌──────────────┐   ┌───────────────────┐
+│  Waitlist  │   │ Arbitration  │   │ Fee configuration │
+│ promotion  │   │   disputes   │   │ platform + risk   │
+└────────────┘   └──────────────┘   └───────────────────┘
+```
+
 ### Roles
 
 | Role | Address | Permissions |
@@ -545,6 +552,9 @@ stellar contract invoke \
 MIT
 
 ## Handsoff notes
+
+<!-- handsoff-issue-213 -->
+- #213: Add rustdoc examples to the public contract interface for docs.rs-style generation
 
 <!-- handsoff-issue-235 -->
 - #235: Add a cross-contract call failure/panic differentiation test for enroll_internal
