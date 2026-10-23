@@ -1,5 +1,9 @@
 # SorobanLard Contract — Makefile
 #
+# Deployment runbook: after running `make deploy-testnet`, record the resulting
+# contract ID, deployed Wasm hash, and deployment date in DEPLOYMENTS.md at the
+# repository root. Keep DEPLOYMENTS.md in sync with every deployment.
+
 # Toolchain assumptions:
 #   - Rust with the wasm32v1-none target installed:
 #       rustup target add wasm32v1-none
@@ -40,6 +44,9 @@ optimize: build
 	stellar contract optimize --wasm $(WASM_PATH)
 	@echo "Optimized: $(WASM_OPT)"
 
+# Deploy to testnet. After a successful deploy, update DEPLOYMENTS.md with the
+# new contract ID, Wasm hash, and deployment date (see repo root DEPLOYMENTS.md).
+
 # Optimize, then deploy the optimized wasm to $(NETWORK) using the identity
 # in $(STELLAR_ACCOUNT) via `stellar contract deploy`.
 deploy-testnet: optimize
@@ -47,6 +54,7 @@ deploy-testnet: optimize
 		--wasm $(WASM_OPT) \
 		--source $(STELLAR_ACCOUNT) \
 		--network $(NETWORK)
+	@echo "Deployed. Remember to record the contract ID, Wasm hash, and date in DEPLOYMENTS.md."
 
 # Format the Rust sources with `cargo fmt`.
 fmt:

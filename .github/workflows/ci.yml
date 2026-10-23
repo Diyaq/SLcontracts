@@ -42,6 +42,31 @@ jobs:
           toolchain: stable
       - run: cargo fmt --all -- --check
 
+  datakey-variant-limit:
+    name: DataKey Variant Limit Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Warn when DataKey / DataKey2 approach the 50-variant limit
+        run: |
+          LIMIT=50
+          WARN_THRESHOLD=45
+          status=0
+          for enum in DataKey DataKey2; do
+            count=$(awk "/pub enum $enum[[:space:]]*\\{/{flag=1;next} flag&&/^[[:space:]]*\\}/{flag=0} flag" contracts/sorobanlard/src/lib.rs \
+              | grep -E '^[[:space:]]*[A-Z][A-Za-z0-9_]*' \
+              | grep -vE '^[[:space:]]*//' \
+              | wc -l | tr -d ' ')
+            echo "$enum: $count variants (limit $LIMIT, warn at $WARN_THRESHOLD)"
+            if [ "$count" -gt "$LIMIT" ]; then
+              echo "::error::$enum has $count variants, exceeding the $LIMIT-variant #[contracttype] limit."
+              status=1
+            elif [ "$count" -ge "$WARN_THRESHOLD" ]; then
+              echo "::warning::$enum has $count variants, approaching the $LIMIT-variant #[contracttype] limit. Plan the next overflow enum before adding more keys."
+            fi
+          done
+          exit $status
+
   docs-lint:
     name: Docs Lint (architecture diagram)
     runs-on: ubuntu-latest
