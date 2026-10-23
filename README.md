@@ -146,6 +146,7 @@ race-freedom argument for `TotalActiveEnrollments`.
 | Role | Address | Permissions |
 |------|---------|-------------|
 | **Admin** | Set at `init` | Approve/archive courses, mark completions, issue/revoke certificates, update fee |
+| **Secondary Admin** | Set at `init` | Co-signs sensitive operations, including archival and upgrades |
 | **Instructor** | Set per course | Register courses, pause/unpause their own courses |
 | **Student** | Any address | Enroll in active courses |
 | **Treasury** | Set at `init` | Receives platform fee share (passive recipient only) |
@@ -606,3 +607,9 @@ MIT
 
 <!-- handsoff-issue-227 -->
 - #227: Review set_risk_config_enabled toggling mid-flight for fee consistency
+
+<!-- handsoff-issue-222 -->
+- #222: Add fuzz-style test for register_course course_id character validation
+
+<!-- handsoff-issue-223 -->
+- #223: Security review: single compromised admin's blast radius with SecondaryAdmin absent from read-paths
