@@ -554,6 +554,18 @@ MIT
 
 ## Handsoff notes
 
+<!-- handsoff-issue-228 -->
+- #228: Review LastAdminTransferLedger cooldown for bypass via accept_admin timing
+
+<!-- handsoff-issue-229 -->
+- #229: Add negative test: approver (non-admin) cannot perform admin-only operations
+
+<!-- handsoff-issue-230 -->
+- #230: Confirm withdraw_tokens cannot drain funds owed to instructors/students
+
+<!-- handsoff-issue-231 -->
+- #231: Review integer overflow surface in revenue split and risk surcharge math
+
 <!-- handsoff-issue-208 -->
 - #208: Expand Security Considerations section to cover arbitration, risk fees, and upgrade timelocks
 
