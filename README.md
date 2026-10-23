@@ -553,6 +553,18 @@ MIT
 
 ## Handsoff notes
 
+<!-- handsoff-issue-204 -->
+- #204: Introduce a typed error enum for certificate issuance/revocation panics
+
+<!-- handsoff-issue-205 -->
+- #205: Introduce a typed error enum for enrollment/payment panics
+
+<!-- handsoff-issue-206 -->
+- #206: Introduce a typed #[contracterror] enum for course-lifecycle panics
+
+<!-- handsoff-issue-207 -->
+- #207: Add a state-machine diagram for DisputeStatus / ArbitrationCase lifecycle
+
 <!-- handsoff-issue-213 -->
 - #213: Add rustdoc examples to the public contract interface for docs.rs-style generation
 
