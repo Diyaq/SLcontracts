@@ -106,6 +106,10 @@
 //!   new Wasm hash and starts a `get_upgrade_timelock()`-ledger review window (default
 //!   ~1 day); `upgrade_contract` (both admins) executes it only after that window has
 //!   elapsed. `cancel_upgrade` withdraws a pending proposal at any time.
+//! - `set_upgrade_timelock` enforces a hard floor of `MIN_UPGRADE_TIMELOCK_LEDGERS`
+//!   (~1 day), so the review window can never be configured to zero.
+//! - `get_contract_version()` returns the semantic version of the live code so
+//!   off-chain systems can detect when an upgrade has been executed.
 //! - A compromised single admin key cannot upgrade the contract — both admin signatures
 //!   are required for every step, and the time-lock gives observers a chance to react to
 //!   a malicious proposal before it can take effect.
@@ -283,6 +287,8 @@ pub struct ArbitrationResolved {
     pub fee_paid: i128,
     /// Admin that resolved the case.
     pub resolved_by: Address,
+    /// Secondary admin that co-signed the resolution.
+    pub secondary_admin: Address,
     /// Ledger sequence when the case was resolved.
     pub resolved_at_ledger: u32,
 }
@@ -737,21 +743,22 @@ contract_data_key! {
     }
 }
 
-/// Overflow keys split out to avoid the #[contracttype] variant-count limit.
-#[contracttype]
-pub enum DataKey2 {
-    /// Threshold price (in stroops) above which a course is "high-value"
-    /// and requires co-signature from two different admins to approve
-    HighValueCourseThreshold,
-    /// Stores the first approver's address for a high-value course pending co-signature
-    HighValueCourseApproval(String),
-    /// Append-only list of caller addresses that have opened an arbitration
-    /// case for a course. Preserved after resolution so the full dispute
-    /// history for the course remains enumerable.
-    CourseArbitrationCases(String),
-    /// Append-only list of course IDs for which a student has opened an
-    /// arbitration case. Preserved after resolution.
-    StudentArbitrationCases(Address),
+contract_data_key! {
+    /// Overflow keys split out to avoid the #[contracttype] variant-count limit.
+    pub enum DataKey2 {
+        /// Threshold price (in stroops) above which a course is "high-value"
+        /// and requires co-signature from two different admins to approve
+        HighValueCourseThreshold,
+        /// Stores the first approver's address for a high-value course pending co-signature
+        HighValueCourseApproval(String),
+        /// Append-only list of caller addresses that have opened an arbitration
+        /// case for a course. Preserved after resolution so the full dispute
+        /// history for the course remains enumerable.
+        CourseArbitrationCases(String),
+        /// Append-only list of course IDs for which a student has opened an
+        /// arbitration case. Preserved after resolution.
+        StudentArbitrationCases(Address),
+    }
 }
 
 // Fail the build as soon as either storage-key enum outgrows its XDR budget.
@@ -796,6 +803,11 @@ impl SorobanLardContract {
     /// Minimum ledgers before persistent storage TTL extension is triggered (~1 year)
     pub(crate) const PERSISTENT_TTL_THRESHOLD: u32 = 6_000_000;
     pub(crate) const PERSISTENT_TTL_EXTEND_TO: u32 = 6_300_000;
+    /// Semantic version of the deployed contract code, exposed on-chain via
+    /// `get_contract_version()` so off-chain consumers can detect upgrades.
+    /// Bump on every change to a public function signature or event payload
+    /// (see "Contract Versioning" in the README).
+    pub(crate) const CONTRACT_VERSION: &'static str = "0.1.0";
     const MAX_COURSE_ID_LEN: u32 = 256;
     const MAX_COURSE_TITLE_LEN: u32 = 512;
     /// Minimum non-zero course price accepted at registration, denominated
@@ -813,6 +825,13 @@ impl SorobanLardContract {
     /// sequences (~17,280 ledgers ≈ 1 day at 5s/ledger). Used when the
     /// admin has not configured a custom value via `set_upgrade_timelock`.
     const DEFAULT_UPGRADE_TIMELOCK_LEDGERS: u32 = 17_280;
+    /// Hard floor for the upgrade governance time-lock, in ledger sequences
+    /// (~17,280 ledgers ≈ 1 day at 5s/ledger). `set_upgrade_timelock` rejects
+    /// any lower value so a compromised admin pair cannot shrink the review
+    /// window to zero and push a malicious upgrade through immediately.
+    /// Mainnet deployments should configure a longer window — see the
+    /// "Upgrade Time-Lock Guidance" section of the README.
+    pub(crate) const MIN_UPGRADE_TIMELOCK_LEDGERS: u32 = 17_280;
     /// Cooldown period in ledger sequences after a course is archived
     /// before the same course ID can be re-registered. This prevents
     /// confusion where a new course inherits the identity of an archived
@@ -4935,10 +4954,17 @@ impl SorobanLardContract {
     /// Requires both admin signatures. Does not affect an already-pending
     /// upgrade's `effective_ledger` — propose a new upgrade to apply a
     /// changed time-lock.
+    ///
+    /// `ledgers` must be at least `MIN_UPGRADE_TIMELOCK_LEDGERS` (~1 day), so
+    /// even a compromised admin pair cannot remove the review window.
     pub fn set_upgrade_timelock(env: Env, admin1: Address, admin2: Address, ledgers: u32) {
         admin1.require_auth();
         admin2.require_auth();
         Self::require_multi_admin(&env, &admin1, &admin2);
+
+        if ledgers < Self::MIN_UPGRADE_TIMELOCK_LEDGERS {
+            panic!("upgrade time-lock is below the minimum allowed");
+        }
 
         env.storage()
             .instance()
@@ -4964,6 +4990,13 @@ impl SorobanLardContract {
     /// Get the currently pending upgrade proposal, if any.
     pub fn get_pending_upgrade(env: Env) -> Option<PendingUpgrade> {
         env.storage().instance().get(&DataKey::PendingUpgrade)
+    }
+
+    /// Get the semantic version (`MAJOR.MINOR.PATCH`) of the currently
+    /// deployed contract code. Lets the backend and block explorers detect
+    /// a live Wasm upgrade without comparing Wasm hashes manually.
+    pub fn get_contract_version(env: Env) -> String {
+        String::from_str(&env, Self::CONTRACT_VERSION)
     }
 
     // ----------------------------------------------------------
@@ -6078,9 +6111,29 @@ impl SorobanLardContract {
         env.storage().persistent().set(&case_key, &case);
         Self::extend_persistent_ttl(&env, &case_key);
 
+        let outcome_topic = if for_student {
+            Symbol::new(&env, "resolved_for_student")
+        } else {
+            Symbol::new(&env, "resolved_for_instructor")
+        };
+        let event = ArbitrationResolved {
+            case_id: case.case_id.clone(),
+            course_id: case.course_id.clone(),
+            caller: case.caller.clone(),
+            instructor: case.instructor.clone(),
+            outcome: case.status.clone(),
+            fee_paid: case.fee_paid,
+            resolved_by: admin,
+            secondary_admin,
+            resolved_at_ledger,
+        };
         env.events().publish(
-            (Symbol::new(&env, "arbitration_resolved"), course_id.clone()),
-            (caller, course_id, for_student, admin),
+            (
+                Symbol::new(&env, "arbitration_resolved"),
+                case.case_id,
+                outcome_topic,
+            ),
+            event,
         );
     }
 
@@ -6101,7 +6154,10 @@ impl SorobanLardContract {
             .instance()
             .extend_ttl(Self::INSTANCE_TTL_THRESHOLD, Self::INSTANCE_TTL_EXTEND_TO);
 
-        let case_key = ArbitrationCaseKey { caller: caller.clone(), course_id: course_id.clone() };
+        let case_key = ArbitrationCaseKey {
+            caller: caller.clone(),
+            course_id: course_id.clone(),
+        };
         let mut case: ArbitrationCase = env
             .storage()
             .persistent()
@@ -6127,24 +6183,11 @@ impl SorobanLardContract {
         env.storage().persistent().set(&case_key, &case);
         Self::extend_persistent_ttl(&env, &case_key);
 
-        let outcome_topic = match case.status {
-            DisputeStatus::ResolvedForStudent => Symbol::new(&env, "resolved_for_student"),
-            DisputeStatus::ResolvedForInstructor => Symbol::new(&env, "resolved_for_instructor"),
-            DisputeStatus::Open => panic!("arbitration case is not open"),
-        };
-        let event = ArbitrationResolved {
-            case_id: case.case_id.clone(),
-            course_id: case.course_id.clone(),
-            caller: case.caller.clone(),
-            instructor: case.instructor.clone(),
-            outcome: case.status.clone(),
-            fee_paid: case.fee_paid,
-            resolved_by: admin.clone(),
-            resolved_at_ledger: env.ledger().sequence(),
-        };
-
         env.events().publish(
-            (Symbol::new(&env, "arbitration_auto_refunded"), course_id.clone()),
+            (
+                Symbol::new(&env, "arbitration_auto_refunded"),
+                course_id.clone(),
+            ),
             (
                 case.caller.clone(),
                 course_id,
@@ -6165,6 +6208,56 @@ impl SorobanLardContract {
     fn arbitration_timeout_at(case: &ArbitrationCase) -> u32 {
         case.opened_at_ledger
             .saturating_add(Self::ARBITRATION_TIMEOUT_LEDGERS)
+    }
+
+    fn append_course_arbitration_case(env: &Env, course_id: &String, caller: &Address) {
+        let key = DataKey2::CourseArbitrationCases(course_id.clone());
+        let mut callers: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(env));
+
+        for i in 0..callers.len() {
+            if callers.get(i).unwrap() == *caller {
+                return;
+            }
+        }
+
+        callers.push_back(caller.clone());
+        env.storage().persistent().set(&key, &callers);
+        Self::extend_persistent_ttl(env, &key);
+    }
+
+    fn append_student_arbitration_case(env: &Env, student: &Address, course_id: &String) {
+        let key = DataKey2::StudentArbitrationCases(student.clone());
+        let mut course_ids: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(env));
+
+        for i in 0..course_ids.len() {
+            if course_ids.get(i).unwrap() == *course_id {
+                return;
+            }
+        }
+
+        course_ids.push_back(course_id.clone());
+        env.storage().persistent().set(&key, &course_ids);
+        Self::extend_persistent_ttl(env, &key);
+    }
+
+    fn get_arbitration_case_internal(
+        env: &Env,
+        caller: &Address,
+        course_id: &String,
+    ) -> Option<ArbitrationCase> {
+        let key = ArbitrationCaseKey {
+            caller: caller.clone(),
+            course_id: course_id.clone(),
+        };
+        env.storage().persistent().get(&key)
     }
 
     /// Complete a payment with a risk assessment.

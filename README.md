@@ -337,7 +337,11 @@ sorobanlard-contract/
 │   └── audit.toml                     ← cargo-audit advisory policy
 ├── .gitignore
 ├── README.md
+├── INVARIANTS.md                      ← Invariant test map and detailed audit model
+├── AUDIT_CHECKLIST.md                 ← Pre-audit security self-review checklist
+├── STATE_MACHINES.md                  ← Documented state transitions
 ├── scripts/
+│   ├── check_invariants.sh            ← Invariant documentation / test coverage check
 │   ├── check_readme_api.py            ← README vs lib.rs signature check
 │   └── smoke-test-testnet.sh          ← Post-deployment testnet smoke test
 └── contracts/
@@ -346,7 +350,7 @@ sorobanlard-contract/
         ├── Makefile                   ← Build / deploy shortcuts
         └── src/
             ├── lib.rs                 ← Full contract logic
-            └── test.rs                ← 14 unit tests
+            └── test.rs                ← Contract tests and invariant suite
 ```
 
 ---
@@ -634,3 +638,15 @@ MIT
 
 <!-- handsoff-issue-223 -->
 - #223: Security review: single compromised admin's blast radius with SecondaryAdmin absent from read-paths
+
+<!-- handsoff-issue-133 -->
+- #133: Add property/invariant test coverage for course, fee, refund, and arbitration lifecycles
+
+<!-- handsoff-issue-134 -->
+- #134: Expand admin audit checklist and timelock floor coverage
+
+<!-- handsoff-issue-143 -->
+- #143: Add tests for unauthorized cross-role access and lifecycle bypasses
+
+<!-- handsoff-issue-146 -->
+- #146: Add invariant tests for accounting and multi-sig safety
