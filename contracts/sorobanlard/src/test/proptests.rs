@@ -18,7 +18,6 @@
 
 use super::*;
 use proptest::prelude::*;
-use soroban_sdk::testutils::Address as _;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 /// Default number of cases per property when `PROPTEST_CASES` is unset.
@@ -76,6 +75,11 @@ fn enroll_with(price: i128, token_fee_bps: u32, course_fee_pct: u32) -> Enrolled
 
     client.set_fee_config(&admin, &token_id, &token_fee_bps);
 
+    let course_fee_pct = if course_fee_pct == 0 {
+        0
+    } else {
+        course_fee_pct.max((token_fee_bps + 99) / 100)
+    };
     let course_id = String::from_str(&env, "PROP-COURSE");
     client.register_course(
         &instructor,
