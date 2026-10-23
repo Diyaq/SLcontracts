@@ -615,6 +615,128 @@ macro_rules! contract_data_key {
     };
 }
 
+contract_data_key! {
+    pub enum DataKey {
+        /// Course record by course ID
+        Course(String),
+        /// Immutable instructor address recorded at registration time
+        CourseInstructorRef(String),
+        /// Enrollment record by (student_address, course_id)
+        Enrollment(Address, String),
+        /// Certificate record by certificate ID
+        Certificate(String),
+        /// Admin address — set at init, can approve courses and issue certificates
+        Admin,
+        /// Secondary admin address for multi-sig operations
+        SecondaryAdmin,
+        /// Optional ledger sequence when the admin role expires
+        AdminExpiresAt,
+        /// Platform treasury address — receives the platform fee share
+        Treasury,
+        /// Platform default fee percentage (overrideable per course)
+        DefaultFee,
+        /// Pending platform treasury address and effective ledger sequence
+        PendingTreasury,
+        /// Whitelisted token contract address (used to validate course tokens)
+        ApprovedToken(Address),
+        /// Pending new admin address — must call accept_admin() to take effect
+        PendingAdmin,
+        /// Pending new secondary admin address
+        PendingSecondaryAdmin,
+        /// Platform paused state flag
+        PlatformPaused,
+        /// Accumulated instructor earnings per (instructor, token) pair (in stroops)
+        InstructorEarnings(Address, Address),
+        /// Accumulated instructor earnings across all tokens (in stroops)
+        InstructorTotalEarnings(Address),
+        /// Number of courses registered by an instructor
+        InstructorCourseCount(Address),
+        /// Number of currently pending courses for an instructor
+        InstructorPendingCourseCount(Address),
+        /// Ordered list of course IDs registered by a specific instructor
+        /// (append-only — course status changes never remove an entry).
+        InstructorCourseList(Address),
+        /// Maximum number of courses an instructor can register
+        MaxCoursesPerInstructor,
+        /// Minimum ledger sequences required between course registration and approval
+        MinReviewDelay,
+        /// Default minimum ledger sequences required between enroll() and
+        /// mark_completed() for newly-registered courses (admin-configurable).
+        DefaultMinCompletionLedgers,
+        /// Refund window delay in ledger sequences
+        RefundWindow,
+        /// Refund request record by (student_address, course_id)
+        RefundRequest(Address, String),
+        /// Blocklist of instructor addresses who are frozen
+        InstructorBlocked(Address),
+        /// Ordered list of all registered course IDs (on-chain catalog)
+        CourseList,
+        /// Archived past `Enrollment` records for a (student, course_id) pair,
+        /// preserved when a completed student re-enrolls via `re_enroll()`.
+        EnrollmentHistory(Address, String),
+        /// Aggregate reputation stats for an instructor (total students,
+        /// completions, certificates issued) — see `InstructorStats`.
+        InstructorStats(Address),
+        /// Blocklist of student addresses who are banned from the platform
+        StudentBlocked(Address),
+        /// Per-token fee configuration (maps token address → FeeConfig)
+        FeeConfig(Address),
+        /// Arbitration fee configuration
+        ArbitrationFeeConfig,
+        /// Risk fee configuration for surcharge pricing
+        RiskFeeConfig,
+        /// Flag indicating whether risk-based fee pricing is enabled
+        RiskConfigEnabled,
+        /// Total active enrollments across all courses platform-wide
+        TotalActiveEnrollments,
+        /// Maximum total active enrollments allowed platform-wide
+        PlatformEnrollmentCap,
+        /// A proposed contract Wasm upgrade awaiting its time-lock, if any.
+        PendingUpgrade,
+        /// Configurable time-lock (in ledger sequences) that must elapse
+        /// between an upgrade proposal and its execution.
+        UpgradeTimelock,
+        /// Waitlist for a course - ordered list of student addresses waiting for enrollment
+        CourseWaitlist(String),
+        /// Global registry of all instructor addresses who have registered courses
+        InstructorRegistry,
+        /// Archived course records by course ID, stored to enforce cooldown
+        /// period before the same course ID can be re-registered.
+        ArchivedCourse(String),
+        /// Configurable challenge period (in ledger sequences) after which
+        /// a pending certificate revocation becomes permanent.
+        RevocationChallengePeriod,
+        /// Ordered (append-only) list of certificate IDs issued for a course.
+        /// Populated by `issue_certificate` and consumed by course-wide bulk
+        /// operations such as `bulk_revoke_course_certificates()`.
+        CourseCertificates(String),
+        /// Mapping from enrollment_reference (unique ID) to (student, course_id)
+        /// Used by issue_certificate to look up enrollments without a caller-supplied course_id.
+        EnrollmentByRef(String),
+        /// Counter for generating unique enrollment references
+        EnrollmentRefCounter,
+        /// Global registry of approver addresses with course approval authority
+        Approver(Address),
+        /// Ledger sequence when init() was called — used to enforce
+        /// a governance window before approve_course() can be called.
+        InitLedger,
+        /// Ledger sequence of the last successful transfer_admin() call.
+        /// Used to enforce a minimum cooldown between consecutive admin key
+        /// rotations, preventing rapid-rotation attacks after a compromise.
+        LastAdminTransferLedger,
+        /// Per-course consecutive enrollment failure counter.
+        /// Incremented each time enroll_internal() panics due to a token
+        /// transfer failure for a specific course. Reset to 0 on a successful
+        /// enrollment. When the count reaches CIRCUIT_BREAKER_THRESHOLD the
+        /// course is automatically paused.
+        CourseFailureCount(String),
+        /// Tokens classified as BTC/ETH-denominated for risk-surcharge pricing.
+        BtcEthToken(Address),
+        /// Lifetime enrollment count per student (new-customer risk flag).
+        StudentEnrollmentCount(Address),
+    }
+}
+
 /// Overflow keys split out to avoid the #[contracttype] variant-count limit.
 #[contracttype]
 pub enum DataKey2 {
@@ -635,6 +757,16 @@ pub enum DataKey2 {
 // Fail the build as soon as either storage-key enum outgrows its XDR budget.
 const _: () = assert!(DataKey::VARIANT_COUNT <= DATA_KEY_VARIANT_LIMIT);
 const _: () = assert!(DataKey2::VARIANT_COUNT <= DATA_KEY_VARIANT_LIMIT);
+
+/// Direct-lookup key recording that an instructor is already listed in
+/// `DataKey::InstructorRegistry`. Lets `register_course` answer "is this
+/// instructor new?" without scanning the registry Vec. Stored as a standalone
+/// key so it does not use up `DataKey`'s 50-variant budget.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct InstructorRegisteredKey {
+    pub instructor: Address,
+}
 
 /// A proposed contract code upgrade awaiting its governance time-lock.
 #[contracttype]
@@ -1000,6 +1132,8 @@ impl SorobanLardContract {
 
         let course_count_key = DataKey::InstructorCourseCount(instructor.clone());
         let current_count: u32 = env.storage().instance().get(&course_count_key).unwrap_or(0);
+        // Used below to recognise instructors who predate `InstructorRegisteredKey`.
+        let had_course_count = env.storage().instance().has(&course_count_key);
 
         if current_count >= max_courses {
             panic!("instructor has reached the maximum number of course registrations");
@@ -1070,17 +1204,15 @@ impl SorobanLardContract {
             categories,
         };
 
+        let course_key = DataKey::Course(course_id.clone());
+        env.storage().persistent().set(&course_key, &course);
+        Self::extend_persistent_ttl(&env, &course_key);
+
+        let instructor_ref_key = DataKey::CourseInstructorRef(course_id.clone());
         env.storage()
             .persistent()
-            .set(&DataKey::Course(course_id.clone()), &course);
-
-        Self::extend_persistent_ttl(&env, &DataKey::Course(course_id.clone()));
-
-        env.storage().persistent().set(
-            &DataKey::CourseInstructorRef(course_id.clone()),
-            &instructor,
-        );
-        Self::extend_persistent_ttl(&env, &DataKey::CourseInstructorRef(course_id.clone()));
+            .set(&instructor_ref_key, &instructor);
+        Self::extend_persistent_ttl(&env, &instructor_ref_key);
 
         // Append to on-chain course catalog
         let mut catalog: Vec<String> = env
@@ -1094,10 +1226,9 @@ impl SorobanLardContract {
             .set(&DataKey::CourseList, &catalog);
         Self::extend_persistent_ttl(&env, &DataKey::CourseList);
 
-        env.storage().instance().set(
-            &DataKey::InstructorCourseCount(instructor.clone()),
-            &(current_count + 1),
-        );
+        env.storage()
+            .instance()
+            .set(&course_count_key, &(current_count + 1));
         env.storage()
             .instance()
             .set(&pending_count_key, &(current_pending_count + 1));
@@ -1115,28 +1246,43 @@ impl SorobanLardContract {
             .set(&instructor_list_key, &instructor_courses);
         Self::extend_persistent_ttl(&env, &instructor_list_key);
 
-        // Add instructor to global registry if first course
-        let mut registry: Vec<Address> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::InstructorRegistry)
-            .unwrap_or_else(|| Vec::new(&env));
-
-        // Check if instructor already exists in registry
-        let mut exists = false;
-        for i in 0..registry.len() {
-            if registry.get(i).unwrap() == instructor {
-                exists = true;
-                break;
-            }
-        }
-
-        if !exists {
-            registry.push_back(instructor.clone());
-            env.storage()
+        // Add the instructor to the global registry on their first course.
+        // Membership is recorded under a direct-lookup key, so repeat
+        // instructors never load the registry Vec and new ones are not
+        // checked by scanning it.
+        let registered_key = InstructorRegisteredKey {
+            instructor: instructor.clone(),
+        };
+        if !env.storage().persistent().has(&registered_key) {
+            let mut registry: Vec<Address> = env
+                .storage()
                 .persistent()
-                .set(&DataKey::InstructorRegistry, &registry);
-            Self::extend_persistent_ttl(&env, &DataKey::InstructorRegistry);
+                .get(&DataKey::InstructorRegistry)
+                .unwrap_or_else(|| Vec::new(&env));
+
+            // An instructor with a course count but no key is either from
+            // before this key existed or was a transferee. Scan the Vec only
+            // for them, so an upgraded contract never lists anyone twice.
+            let mut already_listed = false;
+            if had_course_count {
+                for i in 0..registry.len() {
+                    if registry.get(i).unwrap() == instructor {
+                        already_listed = true;
+                        break;
+                    }
+                }
+            }
+
+            if !already_listed {
+                registry.push_back(instructor.clone());
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::InstructorRegistry, &registry);
+                Self::extend_persistent_ttl(&env, &DataKey::InstructorRegistry);
+            }
+
+            env.storage().persistent().set(&registered_key, &true);
+            Self::extend_persistent_ttl(&env, &registered_key);
         }
 
         env.events().publish(
@@ -1474,22 +1620,22 @@ impl SorobanLardContract {
             }
         }
 
-        let previous_instructor = course.instructor.clone();
+        // Swap in the new owner and keep the previous one, so no clone is needed.
+        let previous_instructor =
+            core::mem::replace(&mut course.instructor, new_instructor.clone());
 
-        course.instructor = new_instructor.clone();
         course.last_updated_ledger = env.ledger().sequence();
-        env.storage()
-            .persistent()
-            .set(&DataKey::Course(course_id.clone()), &course);
-        Self::extend_persistent_ttl(&env, &DataKey::Course(course_id.clone()));
+        let course_key = DataKey::Course(course_id.clone());
+        env.storage().persistent().set(&course_key, &course);
+        Self::extend_persistent_ttl(&env, &course_key);
 
         // Keep CourseInstructorRef in sync so enroll() continues to succeed
         // after ownership changes. Enrollment records themselves are untouched.
-        env.storage().persistent().set(
-            &DataKey::CourseInstructorRef(course_id.clone()),
-            &new_instructor,
-        );
-        Self::extend_persistent_ttl(&env, &DataKey::CourseInstructorRef(course_id.clone()));
+        let instructor_ref_key = DataKey::CourseInstructorRef(course_id.clone());
+        env.storage()
+            .persistent()
+            .set(&instructor_ref_key, &new_instructor);
+        Self::extend_persistent_ttl(&env, &instructor_ref_key);
 
         let old_count_key = DataKey::InstructorCourseCount(previous_instructor.clone());
         let old_count: u32 = env.storage().instance().get(&old_count_key).unwrap_or(0);
@@ -2146,10 +2292,12 @@ impl SorobanLardContract {
             seen.set(id, true);
         }
 
-        // Validate every course before any mutation
+        // Validate every course before any mutation. Each validated Course
+        // is kept so the enroll pass below does not read it from storage again.
+        let mut validated: Vec<Course> = Vec::new(&env);
         for i in 0..course_ids.len() {
             let course_id = course_ids.get(i).unwrap();
-            Self::validate_enrollment(&env, &student, &course_id);
+            validated.push_back(Self::validate_enrollment(&env, &student, &course_id));
         }
 
         // All validations passed — enroll atomically using the validated
@@ -2157,11 +2305,14 @@ impl SorobanLardContract {
         // enroll_internal().
         for i in 0..course_ids.len() {
             let course_id = course_ids.get(i).unwrap();
-            Self::enroll_internal_validated(&env, &student, &course_id);
+            let course = validated.get(i).unwrap();
+            Self::enroll_internal_validated(&env, &student, &course_id, course);
         }
     }
 
-    fn validate_enrollment(env: &Env, student: &Address, course_id: &String) {
+    /// Run every enrollment guard for `student` in `course_id` and return the
+    /// Course that was checked, so callers can reuse it without another read.
+    fn validate_enrollment(env: &Env, student: &Address, course_id: &String) -> Course {
         if env
             .storage()
             .instance()
@@ -2312,13 +2463,12 @@ impl SorobanLardContract {
                 panic!("platform has reached maximum total enrollment capacity");
             }
         }
+
+        course
     }
 
     fn enroll_internal(env: &Env, student: &Address, course_id: &String) {
-        Self::validate_enrollment(env, student, course_id);
-
-        let mut course =
-            Self::get_course_internal(env, course_id).unwrap_or_else(|| panic!("course not found"));
+        let mut course = Self::validate_enrollment(env, student, course_id);
         let token_client = token::Client::new(env, &course.token);
 
         // #178 — Circuit breaker early-exit: if a prior failed invocation has already
@@ -2618,11 +2768,15 @@ impl SorobanLardContract {
     /// # Safety
     ///
     /// Callers must ensure `validate_enrollment()` was already called for
-    /// this `(student, course_id)` pair in the same transaction. Direct
-    /// external callers must use `enroll_internal()` instead.
-    fn enroll_internal_validated(env: &Env, student: &Address, course_id: &String) {
-        let mut course =
-            Self::get_course_internal(env, course_id).unwrap_or_else(|| panic!("course not found"));
+    /// this `(student, course_id)` pair in the same transaction, and pass in
+    /// the Course it returned. Direct external callers must use
+    /// `enroll_internal()` instead.
+    fn enroll_internal_validated(
+        env: &Env,
+        student: &Address,
+        course_id: &String,
+        mut course: Course,
+    ) {
         let token_client = token::Client::new(env, &course.token);
 
         if course.status != CourseStatus::Active {
@@ -4426,7 +4580,7 @@ impl SorobanLardContract {
             .checked_sub(enrollment.enrolled_at_ledger)
             .unwrap_or(0);
 
-        if elapsed > refund_window {
+        if elapsed >= refund_window {
             panic!("refund window has expired");
         }
 
@@ -5227,6 +5381,11 @@ impl SorobanLardContract {
     /// Bump the TTL of a persistent entry using the contract-wide policy.
     /// Every persistent TTL extension goes through here, so changing the
     /// policy (or making it per key category) is a one-place edit.
+    ///
+    /// The host only writes a new TTL when the entry is below
+    /// `PERSISTENT_TTL_THRESHOLD`, so a call on an entry that is still
+    /// healthy does not change its expiry. SDK 22 has no getter for the
+    /// remaining TTL, so the check cannot be made in the contract itself.
     fn extend_persistent_ttl<K>(env: &Env, key: &K)
     where
         K: IntoVal<Env, Val>,
@@ -5966,11 +6125,7 @@ impl SorobanLardContract {
 
         case.status = DisputeStatus::AutoRefunded;
         env.storage().persistent().set(&case_key, &case);
-        env.storage().persistent().extend_ttl(
-            &case_key,
-            Self::PERSISTENT_TTL_THRESHOLD,
-            Self::PERSISTENT_TTL_EXTEND_TO,
-        );
+        Self::extend_persistent_ttl(&env, &case_key);
 
         let outcome_topic = match case.status {
             DisputeStatus::ResolvedForStudent => Symbol::new(&env, "resolved_for_student"),
