@@ -546,6 +546,15 @@ MIT
 
 ## Handsoff notes
 
+<!-- handsoff-issue-200 -->
+- #200: Add defensive checked arithmetic audit pass beyond the existing checked_sub calls
+
+<!-- handsoff-issue-202 -->
+- #202: Replace unwrap_or_else(|| panic!(...)) pattern with a shared helper macro
+
+<!-- handsoff-issue-203 -->
+- #203: Introduce a typed error enum for arbitration/dispute panics
+
 <!-- handsoff-issue-218 -->
 - #218: Events table in README is missing ~10 events emitted by lib.rs
 

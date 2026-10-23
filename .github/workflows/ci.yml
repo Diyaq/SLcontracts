@@ -42,6 +42,32 @@ jobs:
           toolchain: stable
       - run: cargo fmt --all -- --check
 
+  panic-message-style:
+    name: Panic Message Style
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check panic message style
+        run: |
+          status=0
+          while IFS= read -r line; do
+            file="${line%%:*}"
+            rest="${line#*:}"
+            lineno="${rest%%:*}"
+            msg="${rest#*:}"
+            literal=$(printf '%s' "$msg" | sed -n 's/.*"\(.*\)".*/\1/p')
+            [ -z "$literal" ] && continue
+            if printf '%s' "$literal" | grep -q '\.$'; then
+              echo "$file:$lineno: panic message must not end with a period: $literal"
+              status=1
+            fi
+            if printf '%s' "$literal" | grep -q '^[A-Z]'; then
+              echo "$file:$lineno: panic message must start lowercase: $literal"
+              status=1
+            fi
+          done < <(grep -rnE 'panic!\(' --include='lib.rs' contracts/sorobanlard/src)
+          exit $status
+
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest

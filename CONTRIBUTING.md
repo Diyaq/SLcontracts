@@ -102,6 +102,23 @@ In short:
 - Unknown panic messages must map to a generic `500` and be logged
   server-side, never leaked to end users.
 
+## Panic messages
+
+Panic message strings in `lib.rs` follow a short style guide so the eventual
+error-enum migration stays mechanical:
+
+- **Lowercase** the first word (e.g. `course not found`, not `Course not found`).
+- **No trailing period** or other end punctuation.
+- Use consistent **`X cannot Y`** phrasing for precondition failures
+  (e.g. `instructor cannot grade frozen course`).
+- Use one term per concept — prefer `unauthorized` for caller/permission
+  failures rather than mixing role-specific or state-specific wording.
+- Dynamic values are fine, but keep the surrounding text in the same style
+  (e.g. `token decimal precision must be {} (found {})`).
+
+A CI grep check enforces the basics (no trailing period, no leading capital) on
+panic strings; run it locally with the command documented in the workflow.
+
 ## Pull requests
 
 - Branch from `main` and keep each PR focused.
