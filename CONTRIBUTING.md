@@ -87,3 +87,56 @@ Before opening a PR, please confirm:
 - [ ] New public functions have doc comments.
 - [ ] New storage keys follow the `DataKey` / `DataKey2` rules above.
 - [ ] The change stays focused on the linked issue.
+
+## Error and panic messages
+
+Before adding or changing any panic message or error condition, read
+[`ERRORS.md`](ERRORS.md). It is the canonical mapping from contract failures
+to user-facing API error responses in the backend.
+
+In short:
+
+- Every panic message/condition must have a row in `ERRORS.md` describing its
+  intended end-user meaning and the API response it maps to.
+- Keep `code` values stable; only add new codes, never rename existing ones.
+- Unknown panic messages must map to a generic `500` and be logged
+  server-side, never leaked to end users.
+
+## Pull requests
+
+- Branch from `main` and keep each PR focused.
+- Run `cargo fmt --check` and `cargo test` before opening a PR.
+- Add or update tests for any behaviour change, especially new events, guards,
+  and storage keys.
+- Update `README.md` when a public contract function or emitted event changes.
+- Update `ERRORS.md` whenever a new panic condition or error message is added,
+  and keep the API error mapping in sync.
+
+## Continuous integration
+
+Every push and pull request runs the CI workflow defined in
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml), which executes
+`cargo test --workspace` and caches the cargo registry and `target`
+directories to keep runs fast.
+
+Maintainers should configure branch protection on `main` so the CI check is
+**required for merge**. This is applied in the repository settings (Settings →
+Branches → branch protection rules) and is not part of the code in this repo.
+
+CI runs `python3 scripts/check_readme_api.py`, which fails if a documented
+`name(...)` call has a different number of arguments than the matching
+`pub fn` in `lib.rs`. It only warns about public functions the README does
+not mention yet.
+
+## Dependency advisories
+
+CI runs `cargo audit` against `Cargo.lock` on every push and pull request.
+
+- A vulnerability with a fix available must be resolved by upgrading the
+  dependency. Do not ignore it.
+- An advisory with **no available fix** may be accepted by adding its ID to
+  `ignore` in [`.cargo/audit.toml`](.cargo/audit.toml). Each entry must have a
+  comment giving the advisory's reason for acceptance, the affected crate,
+  and the date it should next be reviewed.
+- Ignored advisories are reviewed when the dependency is upgraded and at least
+  once per release. Remove the entry as soon as a fix is available.
